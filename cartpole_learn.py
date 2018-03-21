@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+import numpy.matlib
 import matplotlib.pyplot as plt
 import scipy.integrate
+from drawer import Drawer
+import sys
+from numpy.linalg import solve
 
 odei = np.array([1, 2, 3, 4]);          # varibles for the ode solver
 augi = np.array([]);                    # variables to be augmented
@@ -35,7 +39,7 @@ def gTrig(m,v,i,nargout=3,*e):
         e = np.ones([I,1])
 #    else:
 #        e = e(:);
-    ee = np.reshape(np.atleast_2d([e, e]),(2*I,1));
+    ee = np.reshape(np.atleast_2d([e, e]),(2*I,1),order="F");
     mi = np.zeros(I)
     mi[0] = m[i-1]
     
@@ -133,8 +137,8 @@ def gaussian(m, S, *n):
         n = n[0]
 
 #    tmp = np.random.randn(np.size(S,1),n)
-    tmp = np.ones([np.size(S,1),n])
-    x = m[...,:] + np.linalg.cholesky(S).T.dot(tmp);
+    tmp = np.ones([np.size(S,1),n])#for debug
+    x = m[...,:] + np.linalg.cholesky(S).dot(tmp);
 
     return x
         
@@ -180,6 +184,7 @@ class Cost:
 class Dynmodel:
     def __init__(self):
         self.induce = 0
+        self.hyp = 0
         
 class Opt:
     def __init__(self):
@@ -437,6 +442,7 @@ def simulate(x0, f, plant):
 
     return _next
 
+
 def rollout(start, policy, H, plant, cost,nargout):
     if(plant.augment is 0):
         plant.augment = lambda x:[]
@@ -464,8 +470,9 @@ def rollout(start, policy, H, plant, cost,nargout):
     state[augi] = plant.augment(state)
     
     x = np.zeros([H+1, nX+2*nA]);
-    tmp2 = np.ones([1,np.size(simi)])
-    x[0,simi] = start.T + tmp2.dot(np.linalg.cholesky(plant.noise))#np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise));
+
+#    x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+    x[0,simi] = start.T + np.ones([1,np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T) #  for debug
     x[0,augi] = plant.augment(x[1,:]);
     
     u = np.zeros([H, nU])
@@ -493,9 +500,8 @@ def rollout(start, policy, H, plant, cost,nargout):
             _next[0,subi-1] = plant.subplant(state, u[i,:]);
         state[simi] = _next[0,simi]; 
         state[augi] = plant.augment(state);
-        tmp = np.ones([np.size(simi)])
-    #    x[i+1,simi] = state[simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise));
-        x[i+1,simi] = state[simi] + tmp.dot(np.linalg.cholesky(plant.noise));
+#        x[i+1,simi] = state[simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+        x[i+1,simi] = state[simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
         x[i+1,augi] = plant.augment(x[i+1,:]);
         
         if nargout > 2:
@@ -508,7 +514,364 @@ def rollout(start, policy, H, plant, cost,nargout):
     latent = latent[0:H+1,:];
     L = L[0,0:H];
 
+    return x, y, L, latent
+
+class Curb:
+    def __init__(self):
+        ""
+
+class Paramaters:
+    def __init__(self):
+        ""
+
+def solve_chol(A,B):
+    x = solve(A,solve(A.T,B))
+    return x
+
+def gpr(nargout,logtheta, covfunc, x, y, *xstar):
+    
+    if xstar == () :
+        nargin = 4
+    [n,D] = x.shape
+    
+    y = np.atleast_2d(y).T
+    
+    if(eval('D+2') != np.size(logtheta, 0)):
+        print('Error: Number of parameters do not agree with covariance function')
+
+    K = covfunc[0](3,1,covfunc[1],logtheta,x,0)
+    L = np.linalg.cholesky(K);
+    alpha = solve_chol(L.T,y);
+    
+    
+    if nargin == 4:
+        out1 = 0.5*y.T.dot(alpha) + np.sum(np.log(np.diag(L))) + 0.5*n*np.log(2*np.pi)
+        
+        if( nargout==2 ):
+            out2 = np.zeros(np.shape(logtheta));
+            W = solve(L.T,(solve(L,np.eye(n))))-alpha.dot(alpha.T);
+            for i in range(len(out2)):
+                out2[i]=np.sum(W*covfunc[0](4,1,covfunc[1], logtheta, x, i))/2
+            return out1,out2
+    #ok
+
+    
+    return 0,0
+
+
+def sq_dist(nargin,a, b, Q):
+
+    if(nargin == 1 or b == []):
+        b = a; 
+    [D, n] = a.shape; 
+    [d, m] = b.shape;
+    if d != D:
+        print('Error: column lengths must agree.')
+    if nargin < 3:
+        C = np.zeros([n,m])
+        for d in range(D):
+            C = C + (np.matlib.repmat(np.atleast_2d(b[d,:]), n, 1) - np.matlib.repmat(np.atleast_2d(a[d,:]).T, 1, m))**2;
+    else:
+        if [n, m] == Q.shape:
+            C = np.zeros([D,1]);
+            for d in range(D):
+                C[d] = np.sum(np.sum((np.matlib.repmat(b[d,:], n, 1) - np.matlib.repmat(a[d,:].T, 1, m))**2*Q));
+        else:
+            print('Third argument has wrong size.');
+    
+    return C
+    
+def covNoise(nargin,nargout,logtheta, x, z):
+
+    s2 = np.exp(2*logtheta);#noise variance
+
+    if nargin == 2:# compute covariance matrix
+        A = s2*np.eye(np.size(x,0));
+        return A
+    elif nargout == 2:   # compute test set covariances
+        A = s2
+        B = 0                               #zeros cross covariance by independence
+        return A,B
+    else:                                   #compute derivative matrix
+        A = 2*s2*np.eye(np.size(x,0))
+        return A
+    
+def covSEard(nargin,nargout,loghyper, x, z):
+    [n, D] = x.shape;
+    ell = np.exp(loghyper[:D]);  # characteristic length scale
+    sf2 = np.exp(2*loghyper[D]); # signal variance
+
+    if nargin == 2:
+        covSEard.K = sf2*np.exp(-sq_dist(1,np.diag(1./ell[:,0]).dot(x.T),[],0)/2)
+        A = covSEard.K;
+        return A
+    elif nargout == 2:
+        A = sf2*np.ones([np.size(z,0),1]);
+        B = sf2*np.exp(-sq_dist(2,np.diag(1./ell[:,0]).dot(x.T),np.diag(1./ell[:,0]).dot(z.T),0)/2);
+        return A,B
+    else:
+        if(np.any(np.array(covSEard.K.shape) != n)):
+            covSEard.K = sf2*np.exp(-sq_dist(1,np.diag(1./ell[:,0]).dot(x.T),[],0)/2)
+        if z <= D-1: # length scale parameters
+            A = covSEard.K*sq_dist(1,np.atleast_2d(x[:,z])/ell[z],[],0);
+            return A
+        else:# magnitude parameter
+            A = 2*covSEard.K;
+            covSEard.K = [];
+            return A
+        
+    return 0,0
+
+def covSum(nargin,nargout,covfunc, logtheta, x, z):
+    
+    j = ['D+1','1']
+    [n, D] = x.shape
+    v = np.array([[]]);              # v vector indicates to which covariance parameters belong
+    for i in range(len(covfunc)):
+        v = np.hstack([v, np.matlib.repmat(i, 1, eval(j[i]))])
+
+    if(nargin == 3):
+        A = np.zeros([n, n]);
+        for i in range(len(covfunc)):      #iteration over summand functions
+            f = covfunc[i]
+            A = A + f(2,1,np.atleast_2d(logtheta[(v==i).T]).T, x,0)            
+        return A
+    elif(nargin == 4):
+        if nargout == 2:          #compute test set cavariances
+            A = np.zeros([np.size(z,0),1]);
+            B = np.zeros([np.size(x,0),np.size(z,0)]);   # allocate space
+            for i in range(len(covfunc)):
+                f = covfunc[i];
+                [AA, BB] = f(3,2,logtheta[(v==i).T], x, z);  # compute test covariances
+                A = A + AA 
+                B = B + BB                                  # and accumulate
+        else:                     # compute derivative matrices
+            i = int(v[0,z]);# which covariance function
+            j = np.sum(v[0,:z] == i);             #which parameter in that covariance
+            f = covfunc[i];
+            A = f(3,1,logtheta[(v==i).T], x, j);  #compute derivative
+            return A
+ 
+    return 0,0
+
+def hypCurb(lh, covfunc, x, y, curb):
+    p = 30;  #penalty power
+    D = np.size(x,1);
+
+    if np.size(lh,0) == 3*D+2: 
+        li = np.arange(2*D)
+        sfi = np.arange(2*D,3*D+1) # 1D and DD terms
+    elif np.size(lh,0) == 2*D+1:
+        li = np.arange(D)
+        sfi = np.arange(D,2*D)   # Just 1D terms
+    elif np.size(lh,0) == D+2:
+        li = np.arange(D)
+        sfi = D      # Just DD terms
+    else:
+        print('Incorrect number of hyperparameters'); 
+
+    ll = lh[li]
+    lsf = lh[sfi]
+    lsn = lh[-1];
+        
+    [f, df] = gpr(2,lh, covfunc, x, y);
+    
+    # 2) add penalties and change derivatives accordingly
+    f = f + np.sum(((ll - np.log(curb.std.T))/np.log(curb.ls))**p);  # length-scales
+    df[li] = df[li] + p*(ll - np.log(curb.std.T))**(p-1)/np.log(curb.ls)**p;
+
+    f = f + np.sum(((lsf - lsn)/np.log(curb.snr))**p); # signal to noise ratio
+    df[sfi] = df[sfi] + p*(lsf - lsn)**(p-1)/np.log(curb.snr)**p;
+    df[-1] = df[-1] - p*np.sum((lsf - lsn)**(p-1)/np.log(curb.snr)**p);
+    
+    return f,df
+
+def unwrap(s):
+    v = np.reshape(s,[len(s),1],order="F")
+    return v
+
+def rewrap(s, v):    # map elements of v (vector) onto s (any type)
+    if(np.size(v) < np.size(s)):
+        sys.stderr.write('The vector for conversion contains too few elements')
+    s = np.reshape(v[0:np.size(s)], [np.size(s),1],order="F");
+    v = v[np.size(s):]
+    
+    return s,v
+           
+
+def f(nargout,*varargin):
+    if nargout == 0:
+        f.p = varargin 
+        f.F = f.p[0]
+    else:
+        [s,v] = rewrap(f.p[1], varargin[0])
+        [fx, dfx] = f.F(s, f.p[2][0], f.p[2][1], f.p[2][2], f.p[2][3])
+        dfx = unwrap(dfx);
+        return fx,dfx
+#        return
+
+def LBFGS(x0, fx0, dfx0, p):
+    p.SIG = 0.5  #default for line search quality
+#n = length(x0); k = 0; ok = 1; x = x0; fx = fx0; bs = -1/p.MSR;
+#if isfield(p, 'mem'), m = p.mem; else m = min(100, n); end    % set memory size
+#a = zeros(1, m); t = zeros(n, m); y = zeros(n, m);            % allocate memory
+#i = p.length < 0;                                 % initialize resource counter
+#while i < abs(p.length)
+#  q = dfx0;
+#  for j = rem(k-1:-1:max(0,k-m),m)+1
+#    a(j) = t(:,j)'*q/rho(j); q = q-a(j)*y(:,j);
+#  end
+#  if k == 0, r = -q/(q'*q); else r = -t(:,j)'*y(:,j)/(y(:,j)'*y(:,j))*q; end
+#  for j = rem(max(0,k-m):k-1,m)+1
+#    r = r-t(:,j)*(a(j)+y(:,j)'*r/rho(j));
+#  end
+#  s = r'*dfx0; if s >= 0, r = -dfx0; s = r'*dfx0; k = 0; ok = 0; end
+#  b = bs/min(bs,s/p.MSR);              % suitable initial step size (usually 1)
+#  b = min(b,1/norm(r));                    % limit step size in parameter space
+#  b = max(b,1e-7/norm(r));
+#  if isnan(r) | isinf(r)                                % if nonsense direction
+#    i = -i;                                              % try steepest or stop
+#  else
+#    [x, b, fx0, dfx, i] = lineSearch(x0, fx0, dfx0, r, s, b, i, p); 
+#  end
+#  if i < 0                                              % if line search failed
+#    i = -i; if ok, ok = 0; k = 0; else break; end        % try steepest or stop
+#  else
+#    j = rem(k,m)+1; t(:,j) = x-x0; y(:,j) = dfx-dfx0; rho(j) = t(:,j)'*y(:,j);
+#    ok = 1; k = k+1; bs = b*s;
+#  end
+#  x0 = x; dfx0 = dfx; fx = [fx; fx0];                  % replace and add values
+#end
+#
+#function [x, a, fx, df, i] = lineSearch(x0, f0, df0, d, s, a, i, p)
+#if p.length < 0, LIMIT = min(p.MFEPLS, -i-p.length); else LIMIT = p.MFEPLS; end
+#p0.x = 0.0; p0.f = f0; p0.df = df0; p0.s = s; p1 = p0;         % init p0 and p1
+#j = 0; p3.x = a; wp(p0, p.SIG, 0);         % set step & Wolfe-Powell conditions
+#if p.verbosity > 2
+#  A = [-a a]/5; nd = norm(d); ah = ahandles(p);
+#  hold(ah(2),'off'); plot(ah(2),0, f0, 'k+'); hold(ah(2),'on'); plot(ah(2),nd*A, f0+s*A, 'k-');
+#  xlabel(ah(2),'distance in line search direction'); ylabel(ah(2),'function value');
+#end
+#while 1                               % keep extrapolating as long as necessary
+#  ok = 0; 
+#  while ~ok && j < LIMIT
+#    try           % try, catch and bisect to safeguard extrapolation evaluation
+#      j = j+1; [p3.f p3.df] = f(x0+p3.x*d); p3.s = p3.df'*d; ok = 1; 
+#      if isnan(p3.f+p3.s) || isinf(p3.f+p3.s)
+#        error('Objective function returned Inf or NaN','');
+#      end;
+#    catch
+#      if p.verbosity > 1, printf('\n'); warning(lasterr); end % warn or silence
+#      p3.x = (p1.x+p3.x)/2; ok = 0; p3.f = NaN;  p3.s = NaN;% bisect, and retry
+#    end
+#  end
+#  if p.verbosity > 2
+#    ah = ahandles(p); hold(ah(2),'on');
+#    plot(ah(2),nd*p3.x, p3.f, 'b+'); plot(ah(2),nd*(p3.x+A), p3.f+p3.s*A, 'b-'); drawnow
+#  end
+#  if wp(p3) || j >= LIMIT, break; end                                    % done?
+#  p0 = p1; p1 = p3;                                  % move points back one unit
+#  p3.x = p0.x + minCubic(p1.x-p0.x, p1.f-p0.f, p0.s, p1.s, 1);    % cubic extrap
+#end
+#while 1                                % keep interpolating as long as necessary
+#  if isnan(p3.f+p3.s) || isinf(p3.f+p3.s); p2 = p1; break; end % if final extrap failed
+#  if p1.f > p3.f, p2 = p3; else p2 = p1; end           % make p2 the best so far
+#  if wp(p2) > 1 || j >= LIMIT, break; end                                % done?
+#  p2.x = p1.x + minCubic(p3.x-p1.x, p3.f-p1.f, p1.s, p3.s, 0);    % cubic interp
+#  ok = 0; 
+#  while ~ok && j < LIMIT;   % until function successfully evaluated or j = LIMIT
+#    try                                     % try to evaluate objective function
+#       j = j+1; [p2.f p2.df] = f(x0+p2.x*d); p2.s = p2.df'*d; ok = 1;
+#       if isnan(p2.f+p2.s) || isinf(p2.f+p2.s)
+#           error('Objective function returned Inf or NaN','');
+#       end
+#    catch                             % failed to successfully evaluate function
+#       if p.verbosity > 1, printf('\n'); warning(lasterr); end % warn or silence
+#       p2.x = (p1.x+p2.x)/2; ok = 0; if LIMIT == j; p2 = p1; end
+#    end
+#  end
+#  if p.verbosity > 2
+#    ah = ahandles(p); hold(ah(2),'on');
+#    plot(ah(2),nd*p2.x, p2.f, 'r+'); plot(ah(2),nd*(p2.x+A), p2.f+p2.s*A, 'r'); drawnow
+#  end
+#  if wp(p2) > -1 && p2.s > 0 || wp(p2) < -1, p3 = p2; else p1 = p2; end % bracket
+#end
+#x = x0+p2.x*d; fx = p2.f; df = p2.df; a = p2.x;        % return the value found
+#if p.length < 0, i = i+j; else i = i+1; end % count func evals or line searches
+#if p.verbosity, printf('%s %6i;  value %4.6e\r', p.S, i, fx); end 
+#if wp(p2) < 2, i = -i; end                                   % indicate faliure 
+#if p.verbosity > 2
+#  ah = ahandles(p); hold(ah(1),'on'); hold(ah(2),'on');
+#  if i>0, plot(ah(2),norm(d)*p2.x, fx, 'go'); end
+#  plot(ah(1),abs(i), fx, '+'); drawnow;
+#end
+
+
+
+def minimize(X, F, p, *varargin):
+    param = Paramaters()
+    param.length = p
+    if param.length > 0:
+        param.S = 'linesearch #'
+    else:
+        param.S = 'function evaluation #'
+    print(param.S)
+    x = unwrap(X)
+
+    if len(x) > 1000:
+        param.method = "LBFGS"
+    else:
+        param.method = "BFGS"
+
+    param.verbosity = 1
+    param.MFEPLS = 10
+    param.MSR = 100
+    
+    f(0,F, X, varargin)
+    [fx,dfx] = f(2,x)
+    
+    [x, fX, i, p] = param.method(x, fx, dfx, p)
+#    [fx, dfx] = f(2,x)
+    
     return
+
+def train(gpmodel, dump, _iter = [[-500, -1000]]):
+    curb = Curb()
+    D = np.size(gpmodel.inputs,1);
+    covfunc = [covSum, [covSEard, covNoise]]
+    E = np.size(gpmodel.targets,1);
+    curb.snr = 1000
+    curb.ls = 100
+    curb.std = np.atleast_2d(np.std(gpmodel.inputs,axis=0,ddof=1));# standard deviation ddof = 1
+
+
+    if(gpmodel.hyp == 0):
+        gpmodel.hyp = np.zeros([D+2,E])
+        nlml = np.zeros([1,E]);
+
+        lh = np.matlib.repmat(np.hstack([np.log(curb.std),[[0, -1]]]).T,1,E)
+        lh[D,:] = np.log(np.std(gpmodel.targets,axis = 0,ddof=1))
+        lh[D+1,:] = np.log(np.std(gpmodel.targets,axis=0,ddof=1)/10)       
+    else:
+        lh = gpmodel.hyp;
+        
+    print("Train hyper-parameters of full GP ...")
+    for i in range(1):
+        minimize(lh[:,i], hypCurb, _iter[0,0], covfunc, gpmodel.inputs, gpmodel.targets[:,i], curb);
+    
+
+          
+    
+def trainDynModel():
+    Du = len(policy.maxU)
+    Da = len(plant.angi) # no. of ctrl and angles
+    xaug = np.hstack([x[:,dyno-1], x[:,-Du-2*Da:-Du]])# x augmented with angles
+    dynmodel.inputs = np.hstack([xaug[:,dyni-1], x[:,-Du:]])
+    
+    dynmodel.targets = y[:,dyno-1];
+    dynmodel.targets[:,difi-1] = dynmodel.targets[:,difi-1] - x[:,dyno[difi-1]-1];
+    
+    train(dynmodel,plant, trainOpt)
 
 
 np.random.seed(1)
@@ -519,6 +882,7 @@ cost = Cost()
 dynmodel = Dynmodel()
 opt = Opt()
 fantasy = Fantasy()
+drawer = Drawer()
 
 (mm, ss, cc) = gTrig(mu0, S0, plant.angi,3);
 
@@ -526,8 +890,8 @@ mm = np.vstack([mu0, mm])
 cc = S0.dot(cc)
 ss = np.vstack([np.hstack([S0,cc]),np.hstack([cc.T,ss])])
 policy.p.inputs = gaussian(mm[poli-1], ss[poli-1,:][:,poli-1], nc).T
-#target = 0.1*np.random.randn(nc, len(policy.maxU))
-policy.p.targets = 0.1*np.ones([nc,len(policy.maxU)])
+#policy.p.targets = 0.1*np.random.randn(nc, len(policy.maxU))
+policy.p.targets = 0.1*np.ones([nc,len(policy.maxU)])#for debug
 policy.p.hyp = np.log(np.array([[1, 1, 1, 0.7, 0.7, 1, 0.01]])).T;
 cost.gamma = 1
 cost.p = 0.5
@@ -541,15 +905,34 @@ dynmodel.induce = np.zeros([300,0,1])
 
 trainOpt = np.array([[300, 500]]);
 
+np.set_printoptions(linewidth=200)
 
-x = []
-y = []
+x = 0
+y = 0
 fantasy.mean = [[]] * N
 fantasy.std = [[]] * N
 realCost = [[]]*N;
+latent = [[]];
 M =  [[]]*N;
 Sigma =  [[]]*N;
 
 
 for jj in range(J):
-    rollout(gaussian(mu0, S0),policy,H,plant,cost,4)
+    [xx, yy, realCost[jj], latent[jj]] = rollout(gaussian(mu0, S0),policy,H,plant,cost,4)
+    if x == 0:
+        x = np.empty((0,np.size(xx,1)))
+        y = np.empty((0,np.size(yy,1)))
+
+    x = np.vstack([x, xx])
+    y = np.vstack([y, yy])
+    
+#drawer.main(latent)
+
+mu0Sim = mu0[dyno-1]
+S0Sim = S0[np.ix_(dyno-1,dyno-1)]
+
+for j in range(1):
+    print(j)
+    trainDynModel()
+
+print("end")
