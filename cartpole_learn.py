@@ -207,7 +207,7 @@ def lossSat(cost, m, s,nargout=5):
     z = cost.z
     SW = s.dot(W);
     
-    iSpW = np.linalg.solve((np.eye(D)+SW).T,W.T);
+    iSpW = np.linalg.solve((np.eye(D)+SW).T,W.T).T;
 
 #% 1. Expected cost
     # in interval [-1,0]
@@ -221,7 +221,7 @@ def lossSat(cost, m, s,nargout=5):
 
 #% 2. Variance of cost
     if nargout > 3:
-        i2SpW = np.linalg.solve((np.eye(D)+2*SW).T,W.T);
+        i2SpW = np.linalg.solve((np.eye(D)+2*SW).T,W.T).T;
         
         r2 = np.exp(-(m-z).T.dot(i2SpW).dot(m-z))/np.sqrt(np.linalg.det(np.eye(D)+2*SW));
         S = r2 - L**2;
@@ -878,8 +878,8 @@ def fillIn(nargout,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,dCdp,i,j,
     if(nargout == 7):
         return S, Mdm, Mds, Sdm, Sds, Mdp, Sdp
 
-def maha(a, b, Q):
-    if Q == []:
+def maha(nargin,a, b, Q):
+    if nargin == 2:
         K = np.sum(a*a,1) + np.sum(b*b,1).T -2 * a.dot(b.T);
     else:
         aQ = a.dot(Q)
@@ -920,7 +920,7 @@ def gp2d(nargout,gpmodel, m, s):
 #  % compute K and inv(K) and beta
     for i in range(E):
         inp = inputs/np.exp(X[:D,i]).T;
-        gp2d.K[:,:,i] = np.exp(2*X[D,i])-maha(inp,inp,[])/2;
+        gp2d.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
         if gpmodel.nigp != 0:
             L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
         else:
@@ -930,9 +930,9 @@ def gp2d(nargout,gpmodel, m, s):
         gp2d.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
         
 #% initializations
-    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E]);
+    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
     dMds = np.zeros([E,D,D]); dSdm = np.zeros([E,E,D]); r = np.zeros([1,D]);
-    dSds = np.zeros([E,E,D,D]); dVds = np.zeros([D,E,D,D]); T = np.zeros([D]);
+    dSds = np.zeros([E,E,D,D]); dVds = np.zeros([D,E,D,D]); T = np.zeros([D,D]);
     tlbdi = np.zeros([n,D]); dMdi = np.zeros([E,n,D]); dMdt = np.zeros([E,n,E]);
     dVdt = np.zeros([D,E,n,E]); dVdi = np.zeros([D,E,n,D]); dSdt = np.zeros([E,E,n,E]);
     dSdi = np.zeros([E,E,n,D]); dMdX = np.zeros([E,D+2,E]); dSdX = np.zeros([E,E,D+2,E]);
@@ -951,7 +951,7 @@ def gp2d(nargout,gpmodel, m, s):
         R = s+np.diag(np.exp(2*X[:D,i]));
         L = np.diag(np.exp(-X[:D,i]));
         B = L*s*L+np.eye(D)
-        iR = np.linalg.solve(B.T,L.T).dot(L)
+        iR = np.linalg.solve(B.T,L.T).T.dot(L)
         t = inp.dot(iR);
         l = np.atleast_2d(np.exp(-np.sum(t*inp,1)/2)).T
         lb = l*gp2d.beta[:,i:i+1]
@@ -966,10 +966,10 @@ def gp2d(nargout,gpmodel, m, s):
 
         dldX = l*(t*2*np.exp(2*X[:D,i].T))*t/2;
   
-        M[i] = np.sum(lb)*c;                                           # predicted mean
+        M[i,0] = np.sum(lb)*c;                                           # predicted mean
   
         iK2beta = np.atleast_2d(np.linalg.solve(K2,gp2d.beta[:,i])).T;
-        dMds[i,:,:] = c*t.T.dot(tlb)/2-iR*M[i]/2;
+        dMds[i,:,:] = c*t.T.dot(tlb)/2-iR*M[i,0]/2;
 
         dMdX[i,D+1,i] = -c*np.sum(l*(2*np.exp(2*X[D+1,i])*(iK2beta)))
         dMdX[i,D,i] = -dMdX[i, i*(D+2)+D+1];
@@ -1025,148 +1025,179 @@ def gp2d(nargout,gpmodel, m, s):
         K2 = gp2d.K[:,:,i]+np.exp(2*X[D+1,i])*np.eye(n);
         ii = (inp/np.exp(2*X[:D,i].T));
   
-        for j in range(i): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
+        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
             R = s*np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j]))+np.eye(D)
             t = 1/np.sqrt(np.linalg.det(R));
-#    if rcond(R) < 1e-15; fprintf('R-matrix in gp2d ill-conditioned'); keyboard; end
-#    iR = R\eye(D);
-#    ij = bsxfun(@rdivide,inp,exp(2*X(1:D,j)'));
-#    L = exp(bsxfun(@plus,k(:,i),k(:,j)')+maha(ii,-ij,R\s/2)); % called Q in thesis
-#    A = beta(:,i)*beta(:,j)'; A = A.*L; ssA = sum(sum(A));
-#    S(i,j) = t*ssA; S(j,i) = S(i,j);
-#    
-#    zzi = ii*(R\s);
-#    zzj = ij*(R\s);
-#    zi = ii/R; zj = ij/R;
-#    
-#    tdX  = -0.5*t*sum(iR'.*bsxfun(@times,s,-2*exp(-2*X(1:D,i)')-2*exp(-2*X(1:D,i)')));
-#    tdXi = -0.5*t*sum(iR'.*bsxfun(@times,s,-2*exp(-2*X(1:D,i)')));
-#    tdXj = -0.5*t*sum(iR'.*bsxfun(@times,s,-2*exp(-2*X(1:D,j)')));
-#    bLiKi = iK(:,:,j)*(L'*beta(:,i)); bLiKj = iK(:,:,i)*(L*beta(:,j));
-#    
-#    Q2 = R\s/2;
-#    aQ = ii*Q2; bQ = ij*Q2;
-#    
-#    for d = 1:D
-#      
-#      Z(:,d) = exp(-2*X(d,i))*(A*zzj(:,d) + sum(A,2).*(zzi(:,d) - inp(:,d)))...
-#        + exp(-2*X(d,j))*((zzi(:,d))'*A + sum(A,1).*(zzj(:,d) - inp(:,d))')';
-#      Q = bsxfun(@minus,inp(:,d),inp(:,d)');
-#      B = K(:,:,i).*Q;
-#      Z(:,d) = Z(:,d)+exp(-2*X(d,i))*(B*beta(:,i).*bLiKj+beta(:,i).*(B*bLiKj));
-#      
-#      if i~=j; B = K(:,:,j).*Q; end
-#      
-#      Z(:,d) = Z(:,d)+exp(-2*X(d,j))*(bLiKi.*(B*beta(:,j))+B*bLiKi.*beta(:,j));
-#      B = bsxfun(@plus,zi(:,d),zj(:,d)').*A;
-#      r(d) = sum(sum(B))*t;
-#      T(d,1:d) = sum(zi(:,1:d)'*B,2) + sum(B*zj(:,1:d))';
-#      T(1:d,d) = T(d,1:d)';
-#      
-#      if i==j
-#        RTi =  bsxfun(@times,s,(-2*exp(-2*X(1:D,i)')-2*exp(-2*X(1:D,j)')));
-#        diRi = -R\bsxfun(@times,RTi(:,d),iR(d,:));
-#      else
-#        RTi = bsxfun(@times,s,-2*exp(-2*X(1:D,i)'));
-#        RTj = bsxfun(@times,s,-2*exp(-2*X(1:D,j)'));
-#        diRi = -R\bsxfun(@times,RTi(:,d),iR(d,:));
-#        diRj = -R\bsxfun(@times,RTj(:,d),iR(d,:));
-#        QdXj = diRj*s/2; % dQ2/dXj
-#      end
-#      
-#      QdXi = diRi*s/2; % dQ2/dXj
-#      
-#      if i==j
-#        daQi = ii*QdXi + bsxfun(@times,-2*ii(:,d),Q2(d,:)); % d(ii*Q)/dXi
-#        dsaQi = sum(daQi.*ii,2) - 2.*aQ(:,d).*ii(:,d); dsaQj = dsaQi;
-#        dsbQi = dsaQi; dsbQj = dsbQi;
-#        dm2i = -2*daQi*ii' + 2*(bsxfun(@times,aQ(:,d),ii(:,d)')...
-#          +bsxfun(@times,ii(:,d),aQ(:,d)')); dm2j = dm2i; % -2*aQ*ij'/di
-#      else
-#        dbQi = ij*QdXi;  % d(ij*Q)/dXi
-#        dbQj = ij*QdXj + bsxfun(@times,-2*ij(:,d),Q2(d,:)); % d(ij*Q)/dXj
-#        daQi = ii*QdXi + bsxfun(@times,-2*ii(:,d),Q2(d,:)); % d(ii*Q)/dXi
-#        daQj = ii*QdXj; % d(ii*Q)/dXj
-#        
-#        dsaQi = sum(daQi.*ii,2) - 2.*aQ(:,d).*ii(:,d);
-#        dsaQj = sum(daQj.*ii,2);
-#        dsbQi = sum(dbQi.*ij,2);
-#        dsbQj = sum(dbQj.*ij,2) - 2.*bQ(:,d).*ij(:,d);
-#        dm2i = -2*daQi*ij'; % second part of the maha(..) function wrt Xi
-#        dm2j = -2*ii*(dbQj)'; % second part of the maha(..) function wrt Xj
-#      end
-#      
-#      dm1i = bsxfun(@plus,dsaQi,dsbQi'); % first part of the maha(..) function wrt Xi
-#      dm1j = bsxfun(@plus,dsaQj,dsbQj'); % first part of the maha(..) function wrt Xj
-#      dmahai = dm1i-dm2i;
-#      dmahaj = dm1j-dm2j;
-#      
-#      if i==j
-#        LdXi = L.*(dmahai + bsxfun(@plus,kdX(:,i,d),kdX(:,j,d)'));
-#        dSdX(i,i,d,i) = beta(:,i)'*LdXi*beta(:,j);
-#      else
-#        LdXi = L.*(dmahai + bsxfun(@plus,kdX(:,i,d),zeros(n,1)'));
-#        LdXj = L.*(dmahaj + bsxfun(@plus,zeros(n,1),kdX(:,j,d)'));
-#        dSdX(i,j,d,i) = beta(:,i)'*LdXi*beta(:,j);
-#        dSdX(i,j,d,j) = beta(:,i)'*LdXj*beta(:,j);
-#      end
-#      
-#    end % d
-#    
-#    if i==j
-#      dSdX(i,i,1:D,i) = reshape(dSdX(i,i,1:D,i),D,1) + reshape(bdX(:,i,:),n,D)'*(L+L')*beta(:,i);
-#      dSdX(i,i,1:D,i) = reshape(t*dSdX(i,i,1:D,i),D,1)' + tdX*ssA;
-#      dSdX(i,i,D+2,i) = 2*exp(2*X(D+2,i))*t*(-sum(beta(:,i).*bLiKi)-sum(beta(:,i).*bLiKi));
-#    else
-#      dSdX(i,j,1:D,i) = reshape(dSdX(i,j,1:D,i),D,1) + reshape(bdX(:,i,:),n,D)'*(L*beta(:,j));
-#      dSdX(i,j,1:D,j) = reshape(dSdX(i,j,1:D,j),D,1) + reshape(bdX(:,j,:),n,D)'*(L'*beta(:,i));
-#      dSdX(i,j,1:D,i) = reshape(t*dSdX(i,j,1:D,i),D,1)' + tdXi*ssA;
-#      dSdX(i,j,1:D,j) = reshape(t*dSdX(i,j,1:D,j),D,1)' + tdXj*ssA;
-#      dSdX(i,j,D+2,i) = 2*exp(2*X(D+2,i))*t*(-beta(:,i)'*bLiKj);
-#      dSdX(i,j,D+2,j) = 2*exp(2*X(D+2,j))*t*(-beta(:,j)'*bLiKi);
-#    end
-#    
-#    dSdm(i,j,:) = r - M(i)*dMdm(j,:)-M(j)*dMdm(i,:); dSdm(j,i,:) = dSdm(i,j,:);
-#    T = (t*T-S(i,j)*diag(exp(-2*X(1:D,i))+exp(-2*X(1:D,j)))/R)/2;
-#    T = T - reshape(M(i)*dMds(j,:,:) + M(j)*dMds(i,:,:),D,D);
-#    dSds(i,j,:,:) = T; dSds(j,i,:,:) = T;
-#    
-#    if i==j
-#      dSdt(i,i,:,i) = (beta(:,i)'*(L+L'))/(K2)*t ...
-#        - 2*dMdt(i,:,i)*M(i);
-#      dSdX(i,j,:,i) = reshape(dSdX(i,j,:,i),1,D+2) - M(i)*dMdX(j,:,j)-M(j)*dMdX(i,:,i);
-#    else
-#      dSdt(i,j,:,i) = (beta(:,j)'*L')/(K2)*t ...
-#        - dMdt(i,:,i)*M(j);
-#      dSdt(i,j,:,j) = beta(:,i)'*L/(K(:,:,j)+exp(2*X(D+2,j))*eye(n))*t ...
-#        - dMdt(j,:,j)*M(i);
-#      dSdt(j,i,:,:) = dSdt(i,j,:,:);
-#      dSdX(i,j,:,j) = reshape(dSdX(i,j,:,j),1,D+2) - M(i)*dMdX(j,:,j);
-#      dSdX(i,j,:,i) = reshape(dSdX(i,j,:,i),1,D+2) - M(j)*dMdX(i,:,i);
-#    end
-#    
-#    dSdi(i,j,:,:) = Z*t - reshape(M(i)*dMdi(j,:,:) + dMdi(i,:,:)*M(j),n,D);
-#    dSdi(j,i,:,:) = dSdi(i,j,:,:);
-#    dSdX(j,i,:,:) = dSdX(i,j,:,:);
-#  end % j
-#  
-#  S(i,i) = S(i,i) + 1e-06;    % add small diagonal jitter for numerical reasons
-#end % i
-#
-#dSdX(:,:,D+1,:) = -dSdX(:,:,D+2,:);
-#dSdX(:,:,D+1,:) = -dSdX(:,:,D+2,:);
-#
+
+            if 1/numpy.linalg.cond(R) < 1e-15:
+                print('R-matrix in gp2d ill-conditioned')
+            
+            iR = np.linalg.solve(R,np.eye(D))
+            ij = (inp/np.exp(2*X[:D,j:j+1].T));
+            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
+            A = gp2d.beta[:,i:i+1].dot(gp2d.beta[:,j:j+1].T)
+            A = A*L
+            ssA = np.sum(A)
+            
+            S[i,j] = t*ssA
+            S[j,i] = S[i,j];
+                        
+            zzi = ii.dot(np.linalg.solve(R,s))
+            zzj = ij.dot(np.linalg.solve(R,s))
+            zi = np.linalg.solve(R.T,ii.T).T
+            zj = np.linalg.solve(R.T,ij.T).T
+    
+            tdX  = -0.5*t*np.sum(iR.T*(s * (-2*np.exp(-2*X[:D,i:i+1].T)-2*np.exp(-2*X[:D,i].T))),axis=0);
+            tdXi = -0.5*t*np.sum(iR.T*(s * -2*np.exp(-2*X[:D,i:i+1].T)),axis=0);
+            tdXj = -0.5*t*np.sum(iR.T*(s * -2*np.exp(-2*X[:D,j:i+1].T)),axis=0);
+            bLiKi = gp2d.iK[:,:,j].dot(L.T.dot(gp2d.beta[:,i:i+1]))
+            bLiKj = gp2d.iK[:,:,i].dot(L.dot(gp2d.beta[:,j:j+1]))
+
+    
+            Q2 = np.linalg.solve(R,s)/2
+            aQ = ii.dot(Q2)
+            bQ = ij.dot(Q2)
+    
+            for d in range(D):      
+                Z[:,d:d+1] = np.exp(-2*X[d,i])*(A.dot(zzj[:,d:d+1]) + np.sum(A,1,keepdims=True)*(zzi[:,d:d+1] - inp[:,d:d+1]))\
+                 + np.exp(-2*X[d,j])*((zzi[:,d:d+1]).T.dot(A) + np.sum(A,0,keepdims=True)*(zzj[:,d:d+1] - inp[:,d:d+1]).T).T;
+                 
+    
+                Q = (inp[:,d:d+1] - inp[:,d:d+1].T)
+                B = gp2d.K[:,:,i]*Q;
+                Z[:,d:d+1] = Z[:,d:d+1]+np.exp(-2*X[d,i]) *(B.dot(gp2d.beta[:,i:i+1])*bLiKj+gp2d.beta[:,i:i+1]*(B.dot(bLiKj)));
+
+                if i!=j:
+                    B = gp2d.K[:,:,j]*Q
+      
+                Z[:,d:d+1] = Z[:,d:d+1]+np.exp(-2*X[d,j])*(bLiKi*(B.dot(gp2d.beta[:,j:j+1]))+B.dot(bLiKi)*gp2d.beta[:,j:j+1]);
+                B = (zi[:,d:d+1] + zj[:,d:d+1].T)*A;
+                r[0,d] = np.sum(B)*t
+                T[d:d+1,:d+1] = (np.sum(zi[:,:d+1].T.dot(B),1,keepdims=True) + np.sum(B.dot(zj[:,:d+1]),0,keepdims = True).T).T;
+                T[:d+1,d:d+1] = T[d:d+1,:d+1].T;
+      
+                if i==j:
+                    RTi =  (s *(-2*np.exp(-2*X[:D,i:i+1].T)-2*np.exp(-2*X[:D,j:j+1].T)))
+                    diRi = -np.linalg.solve(R,(RTi[:,d:d+1] * iR[d:d+1,:]))
+                else:
+                    RTi = (s * (-2*np.exp(-2*X[:D,i:i+1].T)));
+                    RTj = (s * (-2*np.exp(-2*X[:D,j:j+1].T)));
+                    diRi = -np.linalg.solve(R,(RTi[:,d:d+1] * iR[d:d+1,:]));
+                    diRj = -np.linalg.solve(R,(RTj[:,d:d+1] * iR[d:d+1,:]));
+                    QdXj = diRj.dot(s)/2; # dQ2/dXj
+                QdXi = diRi.dot(s)/2; # dQ2/dXj
+
+                if i==j:
+                    daQi = ii.dot(QdXi) + (-2*ii[:,d:d+1] * Q2[d:d+1,:]) # d(ii*Q)/dXi
+                    dsaQi = np.sum(daQi*ii,1,keepdims=True) - 2*aQ[:,d:d+1]*ii[:,d:d+1]
+                    dsaQj = np.copy(dsaQi)
+                    dsbQi = np.copy(dsaQi)
+                    dsbQj = np.copy(dsbQi)
+                    dm2i = -2*daQi.dot(ii.T) + 2*((aQ[:,d:d+1] * ii[:,d:d+1].T) + (ii[:,d:d+1] * aQ[:,d:d+1].T));
+                    dm2j = np.copy(dm2i); # -2*aQ*ij'/di
+                else:
+                    dbQi = ij.dot(QdXi);  # d(ij*Q)/dXi
+                    dbQj = ij.dot(QdXj) + (-2*ij[:,d:d+1] * Q2[d:d+1,:]); # d(ij*Q)/dXj
+                    daQi = ii.dot(QdXi) + (-2*ii[:,d:d+1] * Q2[d:d+1,:]); # d(ii*Q)/dXi
+                    daQj = ii.dot(QdXj); # d(ii*Q)/dXj
+        
+                    dsaQi = np.sum(daQi*ii,1,keepdims=True) - 2*aQ[:,d:d+1]*ii[:,d:d+1];
+                    dsaQj = np.sum(daQj*ii,1,keepdims=True);
+                    dsbQi = np.sum(dbQi*ij,1,keepdims=True);
+                    dsbQj = np.sum(dbQj*ij,1,keepdims=True) - 2*bQ[:,d:d+1]*ij[:,d:d+1];
+                    dm2i = -2*daQi.dot(ij.T); # second part of the maha(..) function wrt Xi
+                    dm2j = -2*ii.dot(dbQj.T); #second part of the maha(..) function wrt Xj
+      
+                dm1i = (dsaQi + dsbQi.T) # first part of the maha(..) function wrt Xi
+                dm1j = (dsaQj + dsbQj.T) # first part of the maha(..) function wrt Xj
+                dmahai = dm1i-dm2i;
+                dmahaj = dm1j-dm2j;
+      
+                if i==j:
+                    LdXi = L*(dmahai + (kdX[:,i,d:d+1] + kdX[:,j,d:d+1].T));
+                    dSdX[i,i,d,i] = gp2d.beta[:,i:i+1].T.dot(LdXi).dot(gp2d.beta[:,j:j+1]);
+                else:
+                    LdXi = L*(dmahai + (kdX[:,i,d:d+1] + np.zeros([n,1]).T));
+                    LdXj = L*(dmahaj + (np.zeros([n,1]) + kdX[:,j,d:d+1].T));
+                    dSdX[i,j,d,i] = gp2d.beta[:,i:i+1].T.dot(LdXi).dot(gp2d.beta[:,j:j+1]);
+                    dSdX[i,j,d,j] = gp2d.beta[:,i:i+1].T.dot(LdXj).dot(gp2d.beta[:,j:j+1]);
+
+            if i==j:
+                dSdX[i,i,:D,i:i+1] = np.reshape(dSdX[i,i,:D,i],[D,1],order = 'F') \
+                + np.reshape(bdX[:,i,:],[n,D],order = 'F').T.dot(L+L.T).dot(gp2d.beta[:,i:i+1]);
+                
+                dSdX[i,i,:D,i] = np.reshape(t*(dSdX[i,i,:D,i:i+1]),[D,1],order = 'F').T + tdX.dot(ssA)
+
+                dSdX[i,i,D+1,i] = 2*np.exp(2*X[D+1,i])*t* \
+                (-np.sum(gp2d.beta[:,i:i+1]*bLiKi,axis = 0,keepdims = True)\
+                 -np.sum(gp2d.beta[:,i:i+1]*bLiKi,axis = 0,keepdims = True));
+
+            else:
+                dSdX[i,j,:D,i] = np.reshape(dSdX[i,j,:D,i],[D,1],order = 'F') + np.reshape(bdX[:,i,:],[n,D],order = 'F').T*(L.dot(gp2d.beta[:,j:j+1]));
+                dSdX[i,j,:D,j] = np.reshape(dSdX[i,j,:D,j],[D,1],order = 'F') + np.reshape(bdX[:,j,:],[n,D],order = 'F').T*(L.T.dot(gp2d.beta[:,i:i+1]));
+                dSdX[i,j,:D,i] = np.reshape(t*dSdX[i,j,:D,i],[D,1],order = 'F').T + tdXi.dot(ssA);
+                dSdX[i,j,:D,j] = np.reshape(t*dSdX[i,j,:D,j],[D,1],order = 'F').T + tdXj.dot(ssA);
+                dSdX[i,j,D+1,i] = 2*np.exp(2*X[D+1,i])*t*(-gp2d.beta[:,i:i+1].T.dot(bLiKj));
+                dSdX[i,j,D+1,j] = 2*np.exp(2*X[D+1,j])*t*(-gp2d.beta[:,j:j+1].T.dot(bLiKi));
+            
+            dSdm[i,j,:] = r - M[i,0]*(dMdm[j:j+1,:]) - M[j,0]*(dMdm[i:i+1,:]);
+            dSdm[j,i,:] = dSdm[i,j,:];
+            T = (t*T-S[i,j]*np.linalg.solve(R.T,np.diag((np.exp(-2*X[:D,i:i+1])+np.exp(-2*X[:D,j:j+1]))[:,0]).T))/2;
+
+            T = T - np.reshape(M[i,0]*dMds[j,:,:] + M[j,0]*dMds[i,:,:],[D,D],order = 'F');
+
+            dSds[i,j,:,:] = T
+            dSds[j,i,:,:] = T
+    
+            if i==j:
+                dSdt[i,i,:,i] = np.linalg.solve(K2.T,(gp2d.beta[:,i:i+1].T.dot(L+L.T)).T).T*t - 2*dMdt[i,:,i]*M[i,0];
+                dSdX[i,j,:,i] = np.reshape(dSdX[i,j,:,i],[1,D+2],order='F') - M[i,0]*dMdX[j,:,j]-M[j]*dMdX[i,:,i];
+            else:
+                dSdt[i,j,:,i] = np.linalg.solve(K2.T,(gp2d.beta[:,j:j+1].T.dot(L.T)).T).T*t - dMdt[i,:,i]*M[j,0];
+                dSdt[i,j,:,j] = np.linalg.solve((K[:,:,j]+np.exp(2*X[D+1,j])*np.eye(n)).T,(gp2d.beta[:,i:i+1].T.dot(L)).T).T*t - dMdt[j,:,j]*M[i,0]
+                dSdt[j,i,:,:] = dSdt[i,j,:,:]
+                dSdX[i,j,:,j] = np.reshape(dSdX[i,j,:,j],[1,D+2],order = 'F') - M[i,0]*dMdX[j,:,j]
+                dSdX[i,j,:,i] = np.reshape(dSdX[i,j,:,i],[1,D+2],order = 'F') - M[j,0]*dMdX[i,:,i]
+    
+            dSdi[i,j,:,:] = Z*t - np.reshape(M[i,0]*dMdi[j,:,:] + dMdi[i,:,:]*M[j,0],[n,D],order = 'F');
+            dSdi[j,i,:,:] = dSdi[i,j,:,:]
+            dSdX[j,i,:,:] = dSdX[i,j,:,:]
+        #loop end j
+    
+        S[i,i] = S[i,i] + 1e-06;    # add small diagonal jitter for numerical reasons
+        
+    #loop end i
+
+    dSdX[:,:,D,:] = -dSdX[:,:,D+1,:];
+    dSdX[:,:,D,:] = -dSdX[:,:,D+1,:];
+
 #% 4) centralize moments
-#S = S - M*M';
+    S = S - M.dot(M.T);
+    
 #%S(diag(S)<0,diag(S)<0) = 1e-6;
-#
+
 #% 5) Vectorize derivatives
-#dMds=reshape(dMds,[E D*D]);
-#dSdm=reshape(dSdm,[E*E D]); dSds=reshape(dSds,[E*E D*D]);
-#dVdm=reshape(dVdm,[D*E D]); dVds=reshape(dVds,[D*E D*D]);
-#dMdi=reshape(dMdi,E,[]);  dMdt=reshape(dMdt,E,[]);  dMdX=reshape(dMdX,E,[]);
-#dSdi=reshape(dSdi,E*E,[]);dSdt=reshape(dSdt,E*E,[]);dSdX=reshape(dSdX,E*E,[]);
-#dVdi=reshape(dVdi,D*E,[]);dVdt=reshape(dVdt,D*E,[]);dVdX=reshape(dVdX,D*E,[]);
+    dMds=np.reshape(dMds,[E, D*D],order = 'F');
+    dSdm=np.reshape(dSdm,[E*E, D],order = 'F');
+    dSds=np.reshape(dSds,[E*E, D*D],order = 'F');
+    
+    dVdm=np.reshape(dVdm,[D*E, D],order = 'F');
+    dVds=np.reshape(dVds,[D*E, D*D],order = 'F');
+    
+    dMdi=np.reshape(dMdi,[E,-1],order = 'F')
+    dMdt=np.reshape(dMdt,[E,-1],order = 'F')  
+    dMdX=np.reshape(dMdX,[E,-1],order = 'F')
+    
+    dSdi=np.reshape(dSdi,[E*E,-1],order = 'F');
+    dSdt=np.reshape(dSdt,[E*E,-1],order = 'F');
+    dSdX=np.reshape(dSdX,[E*E,-1],order = 'F');
+    
+    dVdi=np.reshape(dVdi,[D*E,-1],order = 'F');
+    dVdt=np.reshape(dVdt,[D*E,-1],order = 'F');
+    dVdX=np.reshape(dVdX,[D*E,-1],order = 'F');
+
+    return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds, dMdi, dSdi, dVdi,dMdt, dSdt, dVdt, dMdX, dSdX, dVdX
+    
 
 
 def congp(nargout,policy, m, s):
