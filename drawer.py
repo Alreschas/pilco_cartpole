@@ -70,7 +70,7 @@ class Drawer:
         
         glutInit(sys.argv)
     
-        glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE,GLUT_ACTION_GLUTMAINLOOP_RETURNS);
+#        glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE,GLUT_ACTION_GLUTMAINLOOP_RETURNS);
 
         glutInitDisplayMode(GLUT_RGBA)
 

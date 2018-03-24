@@ -9,7 +9,6 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import sys
-import Tkinter as tk
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
