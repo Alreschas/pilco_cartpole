@@ -9,6 +9,7 @@ from drawer import Drawer
 import sys
 from numpy.linalg import solve
 from collections import OrderedDict
+import copy
 
 odei = np.array([1, 2, 3, 4]);          # varibles for the ode solver
 augi = np.array([]);                    # variables to be augmented
@@ -182,7 +183,9 @@ class Cost:
 class Dynmodel:
     def __init__(self):
         self.induce = 0
-        self.hyp = 0
+        self.hyp = np.empty(0)
+        self.sub = 0
+        self.nigp = 0
         
 class Opt:
     def __init__(self):
@@ -265,8 +268,9 @@ def loss_cp(cost, m, s):
     D0 = np.size(s,1) # state dimension
     D1 = D0 + 2*len(cost.angle) #state dimension (with sin/cos)
     
+    
     M = np.zeros([D1,1])
-    M[0:D0,0] = m
+    M[:D0,0:1] = m
     S = np.zeros([D1,D1])
     S[0:D0,0:D0] = s;
     Mdm = np.vstack([np.eye(D0),np.zeros([D1-D0,D0])])
@@ -439,17 +443,13 @@ def simulate(x0, f, plant):
 
 
 def rollout(start, policy, H, plant, cost,nargout):
-    if(plant.augment is 0):
-        plant.augment = lambda x:[]
-        augi = []
-    else:
-        augi = plant.augi
+
+    plant.augment = lambda x:[]
+    augi = []
     
-    if(plant.subplant is 0):
-        plant.subplant = lambda x,y:[]
-        subi = []
-    else:
-        subi = plant.subi
+    plant.subplant = lambda x,y:[]
+    subi = []
+
     odei = plant.odei
     poli = plant.poli
     dyno = plant.dyno
@@ -460,9 +460,9 @@ def rollout(start, policy, H, plant, cost,nargout):
     nU = len(policy.maxU)
     nA = len(angi);
     
-    state = np.zeros([len(simi)])
-    state[simi] = np.copy(start[:,0])
-    state[augi] = plant.augment(state)
+    state = np.zeros([1,len(simi)])
+    state[0,simi] = np.copy(start[:,0])
+    state[0,augi] = plant.augment(state)
     
     x = np.zeros([H+1, nX+2*nA]);
 
@@ -486,21 +486,21 @@ def rollout(start, policy, H, plant, cost,nargout):
         if(policy.fcn is 0):
             u[i,:] = policy.maxU*(2*np.random.rand(1,nU)-1)
         else:
-            print("error")
-#            u[i,:] = policy.maxU.*(2*rand(1,nU)-1)
-        latent[i,:] = np.hstack([state, u[i,:]]);
+            u[i,:] = policy.fcn[0](1,policy.fcn[1][0],policy.fcn[1][1],policy, s[poli], np.zeros([np.size(poli),np.size(poli)]))
 
-        _next[0,odei-1] = simulate(state[odei-1], u[i,:], plant);
+        latent[i,:] = np.hstack([state, u[i:i+1,:]]);
+
+        _next[0,odei-1] = simulate(state[0,odei-1], u[i,:], plant);
         if subi != []:
             _next[0,subi-1] = plant.subplant(state, u[i,:]);
-        state[simi] = _next[0,simi]; 
-        state[augi] = plant.augment(state);
+        state[0,simi] = _next[0,simi]; 
+        state[0,augi] = plant.augment(state);
 #        x[i+1,simi] = state[simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
-        x[i+1,simi] = state[simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
+        x[i+1,simi] = state[0,simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
         x[i+1,augi] = plant.augment(x[i+1,:]);
         
         if nargout > 2:
-            L[0,i] = (cost.fcn(cost,state[dyno-1].T,np.zeros([len(dyno),len(dyno)])))[0]
+            L[0,i] = (cost.fcn(cost,state[:,dyno-1].T,np.zeros([len(dyno),len(dyno)])))[0]
         
 
     y = x[1:H+1,0:nX]
@@ -707,10 +707,22 @@ def unwrap(s):
 def rewrap(s, v):    # map elements of v (vector) onto s (any type)
     if(np.size(v) < np.size(s)):
         sys.stderr.write('The vector for conversion contains too few elements')
-    s = np.reshape(v[0:np.size(s)], [np.size(s),1],order="F");
-    v = v[np.size(s):]
-    
-    return s,v
+    rets = copy.deepcopy(s)
+    retv = copy.deepcopy(v)
+
+    if isinstance(s,np.ndarray):
+        rets = np.reshape(v[0:np.size(s)], [np.size(s),1],order='F');
+        retv = v[np.size(rets):]
+    else:    
+        st = 0
+        idx = 0
+        for i in s:
+            tgt = s[i]
+            tmp = v[st:st+np.size(tgt)]
+            st = st + np.size(tgt)
+            ret = tmp.reshape(tgt.shape,order = 'F')
+            rets[i] = ret    
+    return rets
            
 
 def f(nargout,*varargin):
@@ -718,7 +730,7 @@ def f(nargout,*varargin):
         f.p = varargin 
         f.F = f.p[0]
     else:
-        [s,v] = rewrap(f.p[1], varargin[0])
+        s = rewrap(f.p[1], varargin[0])
         [fx, dfx] = f.F(s, f.p[2][0], f.p[2][1], f.p[2][2], f.p[2][3])
         dfx = unwrap(dfx);
         return fx,dfx
@@ -728,7 +740,7 @@ def f2(nargout,*varargin):
         f.p = varargin 
         f.F = f.p[0]
     else:
-        [s,v] = rewrap(f.p[1], varargin[0])
+        s = rewrap(f.p[1], varargin[0])
 
         [fx,dfx] = f.F(s, f.p[2][0],f.p[2][1],f.p[2][2],f.p[2][3],f.p[2][4],f.p[2][5],f.p[2][6])
 
@@ -750,12 +762,28 @@ class PolicyOptimizer:
     def __init__(self,x0, *varargin):
         self.F = value
         f2(0,self.F, x0, varargin)
+        self.dfx = np.empty(0)
+        self.fx = np.empty(0)
     def targetFunc(self,x):
-        [fx,dfx] = f2(2,x)
-        return 0,0
-#        return fx[0]
+        if(np.size(self.fx) == 0):
+            [fx,dfx] = f2(2,x)
+            self.dfx = unwrap(dfx)
+        else:
+            fx = np.copy(self.fx)
+        self.fx = np.empty(0)
+        return fx
+
     def targetFunc_dev(self,x):
-        [fx,dfx] = f2(2,x)
+        if(np.size(self.dfx) == 0):
+            [fx,dfx] = f2(2,x)
+            dfx = unwrap(dfx)
+            self.fx = np.copy(fx)
+        else:
+            dfx = np.copy(self.dfx)
+
+        self.dfx = np.empty(0)
+
+        return dfx[:,0]
 #        return dfx[:,0]
     
 ########
@@ -800,9 +828,9 @@ def train(gpmodel, dump, _iter = [[-500, -1000]]):
     curb.std = np.atleast_2d(np.std(gpmodel.inputs,axis=0,ddof=1));# standard deviation ddof = 1
 
 
-    if(gpmodel.hyp == 0):
+    if(np.size(gpmodel.hyp) == 0):
         gpmodel.hyp = np.zeros([D+2,E])
-        nlml = np.zeros([E]);
+        train.nlml = np.zeros([E]);
 
         lh = np.matlib.repmat(np.hstack([np.log(curb.std),[[0, -1]]]).T,1,E)
         lh[D,:] = np.log(np.std(gpmodel.targets,axis = 0,ddof=1))
@@ -816,7 +844,7 @@ def train(gpmodel, dump, _iter = [[-500, -1000]]):
         gp_own = GaussianProcess(lh[:,i],covfunc, gpmodel.inputs, gpmodel.targets[:,i], curb)
         result = scipy.optimize.minimize(gp_own.targetFunc,lh[:,i],jac=gp_own.targetFunc_dev,method='BFGS')
         gpmodel.hyp[:,i] = result['x']
-        nlml[i] = result['fun']
+        train.nlml[i] = result['fun']
     
     [N, D] = gpmodel.inputs.shape; 
     [M, uD, uE] = gpmodel.induce.shape;
@@ -824,7 +852,7 @@ def train(gpmodel, dump, _iter = [[-500, -1000]]):
         print("Because of too few training expamples, we don't need FITC")
         return    # if too few training examples, we don't need FITC
     
-def fillIn(nargout,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,dCdp,i,j,k,D):
+def fillIn(nargin,nargout,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,dCdp,i,j,k,D):
     if k is ():
         return
     X = np.reshape(np.arange(D*D),[D, D],order='F') 
@@ -841,29 +869,32 @@ def fillIn(nargout,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,dCdp,i,j,
     dCdm      = Cdm.dot(Mdm[i,:]) + Cds.dot(Sdm[ii,:])
     dCds      = Cdm.dot(Mds[i,:]) + Cds.dot(Sds[ii,:])
     
-    if dCdp == [] and nargout > 5 :
-        Mdp[k,:]  = mdm*Mdp[i,:] + mds*Sdp[ii,:];
-        Sdp[kk,:] = sdm*Mdp[i,:] + sds*Sdp[ii,:];
-        dCdp      = Cdm*Mdp[i,:] + Cds*Sdp[ii,:];
+    if nargin < 19 and nargout > 5 :
+        Mdp[k,:]  = mdm.dot(Mdp[i,:]) + mds.dot(Sdp[ii,:]);
+        Sdp[kk,:] = sdm.dot(Mdp[i,:]) + sds.dot(Sdp[ii,:]);
+        dCdp      = Cdm.dot(Mdp[i,:]) + Cds.dot(Sdp[ii,:]);
     elif nargout > 5:
-        aa = length(k)
+        aa = np.size(k)        
         bb = aa**2
         cc = np.size(C);
+        
         mdp = np.zeros([D,np.size(Mdp,1)])
         sdp = np.zeros([D*D,np.size(Mdp,1)])
-        mdp[k,:]  = np.reshape(Mdp,aa)
+        mdp[k,:]  = np.reshape(Mdp,[aa,-1],order = 'F')
         Mdp = mdp;
         
-        sdp[kk,:] = np.reshape(Sdp,bb)
+        sdp[kk,:] = np.reshape(Sdp,[bb,-1],order = 'F')
         Sdp = sdp;
         
-        Cdp       = np.reshape(dCdp,cc)
+        Cdp       = np.reshape(dCdp,[cc,-1],order = 'F')
         dCdp = Cdp;
+
+        
     q = S[np.ix_(j,i)].dot(C)
     S[np.ix_(j,k)] = q;
     S[np.ix_(k,j)] = q.T # off-diagonal
-    SS = np.kron(np.eye(len(k)),S[np.ix_(j,i)])
-    CC = np.kron(C.T,np.eye(len(j)));
+    SS = np.kron(np.eye(np.size(k)),S[np.ix_(j,i)])
+    CC = np.kron(C.T,np.eye(np.size(j)));
     Sdm[jk,:] = SS.dot(dCdm) + CC.dot(Sdm[ji,:]);
     Sdm[kj,:] = Sdm[jk,:];
     Sds[jk,:] = SS.dot(dCds) + CC.dot(Sds[ji,:]);
@@ -880,11 +911,370 @@ def fillIn(nargout,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,dCdp,i,j,
 
 def maha(nargin,a, b, Q):
     if nargin == 2:
-        K = np.sum(a*a,1) + np.sum(b*b,1).T -2 * a.dot(b.T);
+        K = np.sum(a*a,1,keepdims = True) + np.sum(b*b,1,keepdims = True).T -2 * a.dot(b.T);
     else:
         aQ = a.dot(Q)
-        K = np.sum(aQ*a,1) + np.sum(b.dot(Q)*b,1).T - 2*aQ.dot(b.T);
+        K = np.sum(aQ*a,1,keepdims = True) + np.sum(b.dot(Q)*b,1,keepdims = True).T - 2*aQ.dot(b.T);
     return K
+
+def gp0d(nargin,nargout,gpmodel, m, s):
+
+    if nargout < 4:
+        print("error")
+        [M, S, V] = gp0(3,3,gpmodel, m, s)
+        return M,S,V;
+
+    inputs = gpmodel.inputs
+    [n, D] = gpmodel.inputs.shape
+    E = np.size(gpmodel.targets,1)
+    
+    #for test
+#    gpmodel.hyp = np.array([\
+#       [5.479544426113205,   5.531103007660853,   5.465519490848748,   5.600710657391166],\
+#       [1.986422822089033,   3.945856914954724,   4.402753819006691,   4.505083086212572],\
+#       [3.094041375231762,   2.348837213605796,   2.548113489344849,   2.913900497892119],\
+#       [0.685578386885123,   0.543406310836560,   0.163082332006894,   1.050715615218730],\
+#       [2.750052705613265,   0.412943068601808,   0.030641788356902,   0.859384483464167],\
+#       [4.630573658622718,   3.336565661108991,   2.807800333002539,   3.627360216027113],\
+#       [-0.926721103355503,  0.592911270703511,   1.342433007443704,   0.082775701679897,],\
+#       [-7.211878280324594, -5.516204260437917,  -4.577579891573320,  -5.370897213576217]\
+#       ])
+#    
+#    s = np.array([\
+#     [0.010000000000000,                   0,                   0,                   0,                   0,   0.001393848450685],
+#     [                0,   0.010000000000000,                   0,                   0,                   0,   0.001393837669287],
+#     [                0,                   0,   0.010000000000000,                   0,                   0,   0.001393775913059],
+#     [                0,                   0,                   0,   0.009900663346622,                   0,   0.002774217892993],
+#     [                0,                   0,                   0,                   0,   0.000049502904210,   0.000001001324606],
+#     [0.001393848450685,   0.001393837669287,   0.001393775913059,   0.002774217892993,   0.000001001324606,   0.002243548948394]
+#     ])
+    ###
+    
+    X = gpmodel.hyp;
+    
+    
+#% 1) If necessary, re-compute cached variables
+    if np.size(X) != np.size(gp0d.oldX) \
+    or np.size(gp0d.iK) == 0 \
+    or n != gp0d.oldn \
+    or np.sum(np.any(X != gp0d.oldX)):
+        gp0d.oldX = np.copy(X)
+        gp0d.oldn = n;
+        gp0d.K = np.zeros([n,n,E])
+        gp0d.iK = np.copy(gp0d.K)
+        gp0d.beta = np.zeros([n,E]);
+        
+  
+#  % compute K and inv(K) and beta
+        for i in range(E):
+            
+            inp = inputs/np.exp(X[:D,i]).T;
+            #TODO gp2dと微妙に違う
+            gp0d.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
+            if gpmodel.nigp != 0:
+                L = np.linalg.cholesky(gp0d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+            else:
+                L = np.linalg.cholesky(gp0d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
+    
+            gp0d.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
+            gp0d.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
+
+        
+#% initializations
+    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
+    dMds = np.zeros([E,D,D]); dSdm = np.zeros([E,E,D]);
+    dSds = np.zeros([E,E,D,D]); dVds = np.zeros([D,E,D,D]); T = np.zeros([D,D]);
+ 
+#% centralize training inputs
+    inp = inputs -m.T;
+    
+ 
+    
+#
+#% 2) compute predicted mean and input-output covariance
+    for i in range(E):
+#  % first some useful intermediate terms
+        iL = np.diag(np.exp(-X[:D,i]));
+        _in = inp.dot(iL);
+        B = iL.dot(s).dot(iL)+np.eye(D)
+        LiBL = np.linalg.solve(B.T,iL.T).T.dot(iL)
+        t = np.linalg.solve(B.T,_in.T).T
+        l = np.exp(-np.sum(_in*t,axis = 1,keepdims = True)/2.)
+        lb = l*gp0d.beta[:,i:i+1]
+        tL = t.dot(iL)
+        tlb = tL * lb
+        c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(B));
+        M[i,0] = c * np.sum(lb,axis = 0,keepdims = True)  # predicted mean
+        V[:,i:i+1] = tL.T.dot(lb).dot(c)        # input-output covariance
+        dMds[i,:,:] = c*tL.T.dot(tlb)/2-LiBL*M[i,0]/2;
+        
+        #TODO 要確認 gp2dと微妙に違う
+        for d in range(D):
+            dVds[d,i,:,:] = c*(tL*tL[:,d:d+1]).T.dot(tlb)/2 - LiBL*V[d,i]/2 - (V[:,i:i+1].dot(LiBL[d:d+1,:]) + LiBL[:,d:d+1].dot(V[:,i:i+1].T))/2
+
+#        for d in range(D):
+#            dVds[d,i,:,:] = c*(t * t[:,d:d+1]).T.dot(tlb)/2 - iR*V[d,i]/2 - V[:,i:i+1].dot(iR[d:d+1,:])/2 -iR[:,d:d+1].dot(V[:,i:i+1].T)/2;
+
+        k[:,i:i+1] = 2*X[D,i]-np.sum(_in*_in,1,keepdims = True)/2;
+
+    dMdm = V.T# derivatives w.r.t m
+    dVdm = 2 * np.transpose(dMds,[1,0,2])
+    
+    iell2 = np.exp(-2*gpmodel.hyp[:D,:])
+    inpiell2 = np.empty([inp.shape[0],inp.shape[1],iell2.shape[1]])
+    for p in range(iell2.shape[1]):
+        inpiell2[:,:,p] = (inp * np.transpose(np.atleast_3d(iell2),[2,0,1])[:,:,p])
+
+#% 3) predictive covariance matrix (non-central moments)
+    for i in range(E):
+        ii = inpiell2[:,:,i];
+  
+        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
+            R = s.dot(np.diag(iell2[:,i]+iell2[:,j]))+np.eye(D)
+            t = 1/np.sqrt(np.linalg.det(R));
+            ij = inpiell2[:,:,j]
+            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
+
+            if(i == j):
+                iKL = gp0d.iK[:,:,i]*L 
+
+                s1iKL = np.sum(iKL,0,keepdims = True)
+                s2iKL = np.sum(iKL,1,keepdims = True)
+                S[i,j] = t*(gp0d.beta[:,i:i+1].T.dot(L).dot(gp0d.beta[:,i:i+1]) - np.sum(s1iKL))
+                zi = np.linalg.solve(R.T,ii.T).T
+                                
+                bibLi = L.T.dot(gp0d.beta[:,i:i+1])*gp0d.beta[:,i:i+1]
+                cbLi = L.T.dot(gp0d.beta[:,i:i+1] * zi)
+                r = (bibLi.T.dot(zi)*2 - (s2iKL.T + s1iKL).dot(zi))*t;
+        
+                for d in range(D):                
+                    T[d:d+1,:d+1] = 2*(zi[:,:d+1].T.dot(zi[:,d:d+1]*bibLi) \
+                    + cbLi[:,:d+1].T.dot(zi[:,d:d+1] * gp0d.beta[:,i:i+1]) \
+                    - zi[:,:d+1].T.dot(zi[:,d:d+1]*s2iKL) \
+                    - zi[:,:d+1].T.dot(iKL.dot(zi[:,d:d+1])))[:,0]
+                    
+                    T[:d+1,d:d+1] = T[d:d+1,:d+1].T;
+
+            else:
+                zi = np.linalg.solve(R.T,ii.T).T
+                zj = np.linalg.solve(R.T,ij.T).T;
+                S[i,j] = gp0d.beta[:,i:i+1].T.dot(L).dot(gp0d.beta[:,j:j+1])*t; 
+                S[j,i] = S[i,j];
+      
+                bibLj = L.dot(gp0d.beta[:,j:j+1])*gp0d.beta[:,i:i+1]; 
+                bjbLi = L.T.dot(gp0d.beta[:,i:i+1])*gp0d.beta[:,j:j+1];
+                cbLi = L.T.dot(gp0d.beta[:,i:i+1] * zi);
+                cbLj = L.dot(gp0d.beta[:,j:j+1] * zj);
+      
+                r = (bibLj.T.dot(zi)+bjbLi.T.dot(zj))*t;
+                
+                for d in range(D):
+                    T[d:d+1,:d+1] = (zi[:,:d+1].T.dot(zi[:,d:d+1]*bibLj) 
+                    + cbLi[:,:d+1].T.dot(zj[:,d:d+1]*gp0d.beta[:,j:j+1])\
+                    + zj[:,:d+1].T.dot(zj[:,d:d+1]*bjbLi) \
+                    + cbLj[:,:d+1].T.dot(zi[:,d:d+1]*gp0d.beta[:,i:i+1]))[:,0];
+                    
+                    T[:d+1,d:d+1] = T[d:d+1,:d+1].T; 
+                    
+      
+            
+            dSdm[i,j,:] = r - M[i,0]*(dMdm[j:j+1,:]) - M[j,0]*(dMdm[i:i+1,:]);
+            dSdm[j,i,:] = dSdm[i,j,:];
+
+            T = (t*T-S[i,j]*np.linalg.solve(R.T,np.diag((np.exp(-2*X[:D,i:i+1])+np.exp(-2*X[:D,j:j+1]))[:,0]).T))/2;
+            T = T - np.reshape(M[i,0]*dMds[j,:,:] + M[j,0]*dMds[i,:,:],[D,D],order = 'F');
+            
+
+            dSds[i,j,:,:] = T
+            dSds[j,i,:,:] = T
+    
+        #loop end j
+    
+        S[i,i] = S[i,i] + np.exp(2*X[D,i]); 
+        
+    #loop end i
+
+#% 4) centralize moments
+    S = S - M.dot(M.T);
+    
+#%S(diag(S)<0,diag(S)<0) = 1e-6;
+
+#% 5) Vectorize derivatives
+    dMds=np.reshape(dMds,[E, D*D],order = 'F');
+ 
+    dSds=np.reshape(dSds,[E*E, D*D],order = 'F');
+    dSdm=np.reshape(dSdm,[E*E, D],order = 'F');
+    
+    dVds=np.reshape(dVds,[D*E, D*D],order = 'F');
+    dVdm=np.reshape(dVdm,[D*E, D],order = 'F');
+    
+    return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds  
+
+
+def gp0(nargin,nargout,gpmodel,m,s):
+    
+    inputs = gpmodel.inputs
+    [n, D] = gpmodel.inputs.shape
+    E = np.size(gpmodel.targets,1)
+    
+    X = gpmodel.hyp;
+    
+    if np.size(X) != np.size(gp0.oldX) \
+    or np.size(gp0.iK) == 0 \
+    or n != gp0.oldn \
+    or np.sum(np.any(X != gp0.oldX)):
+        gp0.oldX = np.copy(X)
+        gp0.oldn = n;
+        gp0.K = np.zeros([n,n,E])
+        gp0.iK = np.copy(gp0.K)
+        gp0.beta = np.zeros([n,E]);
+
+        for i in range(E):
+            
+            inp = inputs/np.exp(X[:D,i]).T;
+            #TODO gp0と微妙に違う
+            gp0.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
+            if gpmodel.nigp != 0:
+                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+            else:
+                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
+    
+            gp0.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
+            gp0.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
+
+    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
+    inp = inputs -m.T;
+
+    for i in range(E):
+#  % first some useful intermediate terms
+        iL = np.diag(np.exp(-X[:D,i]));
+        _in = inp.dot(iL);
+        B = iL.dot(s).dot(iL)+np.eye(D)
+
+        t = np.linalg.solve(B.T,_in.T).T
+        l = np.exp(-np.sum(_in*t,axis = 1,keepdims = True)/2.)
+        lb = l*gp0.beta[:,i:i+1]
+        tiL = t.dot(iL)
+        c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(B));
+
+        M[i,0] = c * np.sum(lb,axis = 0,keepdims = True)  # predicted mean
+        V[:,i:i+1] = tiL.T.dot(lb).dot(c)        # input-output covariance
+        k[:,i:i+1] = 2*X[D,i]-np.sum(_in*_in,1,keepdims = True)/2;
+
+    for i in range(E):
+        ii = (inp/np.exp(2*X[:D,i].T));
+  
+        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
+            R = s.dot(np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j])))+np.eye(D)
+            t = 1/np.sqrt(np.linalg.det(R));
+            ij = (inp/np.exp(2*X[:D,j:j+1].T));
+            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
+            if i==j:
+                S[i,i] = t * (gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1]) - np.sum(gp0.iK[:,:,i]*L))
+            else:
+                S[i,j] = gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1])*t; 
+                S[j,i] = S[i,j];
+            
+        S[i,i] = S[i,i] + np.exp(2*X[D,i]); 
+        
+    #loop end i
+
+#% 4) centralize moments
+    S = S - M.dot(M.T);
+    return M,S,V        
+
+
+def gp1(nargin,nargout,gpmodel, m, s):
+    if np.size(gpmodel.induce) == 0:
+        [M, S, V] = gp0(3,3,gpmodel, m, s); 
+        return M,S,V
+    print('error')
+    return 0,0,0
+
+def gp1d(nargin,nargout,gpmodel, m, s):
+    if nargout < 4:
+        [M, S, V] = gp1(3,3,gpmodel, m, s)
+        return M,S,V;
+    
+    if np.size(gpmodel.induce) == 0:
+        [M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds] = gp0d(3,9,gpmodel, m, s); 
+        return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds
+    
+    print('error')
+    return 0,0,0,0,0,0,0,0,0
+
+
+def gp2(gpmodel, m, s):
+
+    inputs = gpmodel.inputs
+    targets = gpmodel.targets
+    X = gpmodel.hyp;
+    
+    D = np.size(inputs,1);       # number of examples and dimension of input space
+
+    [n, E] = targets.shape# number of examples and number of outputs    
+
+    if np.size(X) != np.size(gp2.oldX) \
+    or np.size(gp2.iK) == 0 \
+    or n != gp2.oldn \
+    or np.sum(np.any(X != gp2.oldX))\
+    or np.sum(np.any(gp2.oldIn != inputs)) \
+    or np.sum(np.any(gp2.oldOut != targets)):
+        gp2.oldX = np.copy(X)
+        gp2.oldIn = np.copy(inputs)
+        gp2.oldOut = np.copy(targets)
+        gp2.oldn = n;
+        gp2.K = np.zeros([n,n,E])
+        gp2.iK = np.copy(gp2.K)
+        gp2.beta = np.zeros([n,E]);
+        
+        for i in range(E):
+            inp = inputs/np.exp(X[:D,i]).T;
+            gp2.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
+            if gpmodel.nigp != 0:
+                L = np.linalg.cholesky(gp2.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+            else:
+                L = np.linalg.cholesky(gp2.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
+
+            gp2.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
+            gp2.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
+        
+    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
+    
+    inp = inputs -m.T;
+    
+    for i in range(E):
+        iL = np.diag(np.exp(-X[:D,i]));
+        _in = inp.dot(iL);
+        B = iL.dot(s).dot(iL)+np.eye(D)
+
+        t = np.linalg.solve(B.T,_in.T).T
+        l = np.exp(-np.sum(_in*t,axis = 1,keepdims = True)/2.)
+        lb = l*gp2.beta[:,i:i+1]
+        tL = t.dot(iL)
+        c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(B));
+        
+        M[i,0] = c * np.sum(lb,axis = 0,keepdims = True)  # predicted mean
+        V[:,i:i+1] = tL.T.dot(lb).dot(c)        # input-output covariance
+        
+        k[:,i:i+1] = 2*X[D,i]-np.sum(_in*_in,1,keepdims = True)/2;
+        
+    for i in range(E):
+        ii = (inp/np.exp(2*X[:D,i].T));
+  
+        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
+            R = s.dot(np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j])))+np.eye(D)
+            t = 1/np.sqrt(np.linalg.det(R));
+            ij = (inp/np.exp(2*X[:D,j:j+1].T));
+            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
+            
+            S[i,j] = t * (gp2.beta[:,i:i+1].T).dot(L).dot(gp2.beta[:,j:j+1])
+            S[j,i] = S[i,j];
+            
+        S[i,i] = S[i,i] + 1e-06;
+    S = S - M.dot(M.T);
+    return M,S,V
+
 
 def gp2d(nargout,gpmodel, m, s):
     inputs = gpmodel.inputs
@@ -903,14 +1293,14 @@ def gp2d(nargout,gpmodel, m, s):
 
 #% 1) If necessary, re-compute cached variables
     if np.size(X) != np.size(gp2d.oldX) \
-    or gp2d.iK == [] \
+    or np.size(gp2d.iK) == 0 \
     or n != gp2d.oldn \
     or np.sum(np.any(X != gp2d.oldX))\
     or np.sum(np.any(gp2d.oldIn != inputs)) \
     or np.sum(np.any(gp2d.oldOut != targets)):
-        gp2d.oldX = X
-        gp2d.oldIn = inputs
-        gp2d.oldOut = targets
+        gp2d.oldX = np.copy(X)
+        gp2d.oldIn = np.copy(inputs)
+        gp2d.oldOut = np.copy(targets)
         gp2d.oldn = n;
         gp2d.K = np.zeros([n,n,E])
         gp2d.iK = np.copy(gp2d.K)
@@ -918,17 +1308,17 @@ def gp2d(nargout,gpmodel, m, s):
         
   
 #  % compute K and inv(K) and beta
-    for i in range(E):
-        inp = inputs/np.exp(X[:D,i]).T;
-        gp2d.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
-        if gpmodel.nigp != 0:
-            L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
-        else:
-            L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
-
-        gp2d.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
-        gp2d.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
-        
+        for i in range(E):
+            inp = inputs/np.exp(X[:D,i]).T;
+            gp2d.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
+            if gpmodel.nigp != 0:
+                L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+            else:
+                L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
+    
+            gp2d.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
+            gp2d.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
+            
 #% initializations
     k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
     dMds = np.zeros([E,D,D]); dSdm = np.zeros([E,E,D]); r = np.zeros([1,D]);
@@ -950,7 +1340,7 @@ def gp2d(nargout,gpmodel, m, s):
         ii = inputs/np.exp(2*X[:D,i].T)
         R = s+np.diag(np.exp(2*X[:D,i]));
         L = np.diag(np.exp(-X[:D,i]));
-        B = L*s*L+np.eye(D)
+        B = L.dot(s).dot(L)+np.eye(D)
         iR = np.linalg.solve(B.T,L.T).T.dot(L)
         t = inp.dot(iR);
         l = np.atleast_2d(np.exp(-np.sum(t*inp,1)/2)).T
@@ -1026,7 +1416,7 @@ def gp2d(nargout,gpmodel, m, s):
         ii = (inp/np.exp(2*X[:D,i].T));
   
         for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
-            R = s*np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j]))+np.eye(D)
+            R = s.dot(np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j])))+np.eye(D)
             t = 1/np.sqrt(np.linalg.det(R));
 
             if 1/numpy.linalg.cond(R) < 1e-15:
@@ -1212,23 +1602,121 @@ def congp(nargout,policy, m, s):
 #    % 2. Compute predicted control u inv(s)*covariance between input and control
     if nargout < 4:                                # if no derivatives are required
         [M, S, C] = gp2(policy, m, s);
+        return M, S, C
     else:                                          #else compute derivatives too
-        gp2d(18,policy, m, s)
-#        [M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds, dMdi, dSdi, dCdi, dMdt, dSdt, dCdt, dMdh, dSdh, dCdh] = gp2d(policy, m, s);
-#  
+        [M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds, dMdi, dSdi, dCdi, dMdt, dSdt, dCdt, dMdh, dSdh, dCdh] = gp2d(18,policy, m, s);
+  
 ##  % 3. Set derivatives of non-free parameters to zero: signal and noise variance
-#        d = np.size(policy.inputs,1)        
-#        d2 = np.size(policy.hyp,0)
-#        dimU = np.size(policy.targets,1)
-#        sidx = np.atleast_2d(np.arange(d:d2)).T + np.arange(0:dimU-1).dot(d2);
-#        dMdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
-#        dSdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
-#        dCdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0;
-#  
+        d = np.size(policy.inputs,1)        
+        d2 = np.size(policy.hyp,0)
+        dimU = np.size(policy.targets,1)
+        sidx = np.atleast_2d(np.arange(d,d2)).T + np.atleast_2d(np.arange(0,dimU))*d2;#怪しい
+        dMdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
+        dSdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
+        dCdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
+
 ##        % 4. Merge derivatives
-#        dMdp = np.hstack([dMdh,dMdi,dMdt])
-#        dSdp = np.hstack([dSdh,dSdi,dSdt])
-#        dCdp = np.hstack([dCdh,dCdi,dCdt])
+        dMdp = np.hstack([dMdh,dMdi,dMdt])
+        dSdp = np.hstack([dSdh,dSdi,dSdt])
+        dCdp = np.hstack([dCdh,dCdi,dCdt])
+        
+        return M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds, dMdp, dSdp, dCdp
+
+def gSin(nargin,nargout,m, v, i, e):
+    d = m.size
+    I = i.size
+    i = i.reshape([-1]).T;
+    if nargin < 4:
+        e = np.ones([I, 1])
+    e = e.reshape([-1,1])
+    
+    mi = m[i]
+    vi = v[np.ix_(i,i)]
+    vii = np.atleast_2d(np.diag(vi)).T #short-hand notation
+    M = e*np.exp(-vii/2)*np.sin(mi);      #mean
+    
+    lq = -(vii + vii.T)/2
+    q = np.exp(lq)
+    V = (np.exp(lq+vi)-q)*np.cos((mi - mi.T)) - (np.exp(lq-vi)-q)*np.cos((mi + mi.T))
+    V = e.dot(e.T)*V/2# variance
+
+    C = np.zeros([d,I])
+    C[i,:] = np.diag((e*np.exp(-vii/2)*np.cos(mi))[:,0]); # inv(v) times cov
+
+    if nargout > 3:                                          # compute derivatives?
+        dVdm = np.zeros([I,I,d]);
+        dCdm = np.zeros([d,I,d]); 
+        dVdv = np.zeros([I,I,d,d]); 
+        dCdv = np.zeros([d,I,d,d]);
+        dMdm = C.T;
+        U1 = -(np.exp(lq+vi)-q)*np.sin(mi- mi.T);
+        U2 = (np.exp(lq-vi)-q)*np.sin(mi + mi.T);
+
+        for j in range(I):
+            u = np.zeros([I,1])
+            u[j] = 1/2
+
+            dVdm[:,:,i[j]] = e.dot(e.T)*(U1*(u-u.T) + U2*(u +u.T))  
+            dVdv[j,j,i[j],i[j]] = np.exp(-vii[j]) * (1+(2*np.exp(-vii[j])-1)*np.cos(2*mi[j]))*e[j]*e[j]/2;
+            for k in np.append(np.arange(j),np.arange(j+1,I)):
+                dVdv[j,k,i[j],i[k]] = (np.exp(lq[j,k]+vi[j,k])*np.cos(mi[j]-mi[k]) + np.exp(lq[j,k]-vi[j,k])*np.cos(mi[j]+mi[k]))*e[j]*e[k]/2;
+                dVdv[j,k,i[j],i[j]] = -V[j,k]/2; 
+                dVdv[j,k,i[k],i[k]] = -V[j,k]/2; 
+
+            dCdm[i[j],j,i[j]] = -M[j];
+            dCdv[i[j],j,i[j],i[j]] = -C[i[j],j]/2;
+        
+        dMdv = np.transpose(dCdm,[1, 0, 2])/2;
+  
+        dMdv = np.reshape(dMdv,[I, d*d],order = 'F');
+        dVdv = np.reshape(dVdv,[I*I, d*d],order = 'F');
+        dVdm = np.reshape(dVdm,[I*I, d],order = 'F');
+        dCdv = np.reshape(dCdv,[d*I, d*d],order = 'F'); 
+        dCdm = np.reshape(dCdm,[d*I, d],order = 'F');
+        
+        return M, V, C, dMdm, dVdm, dCdm, dMdv, dVdv, dCdv
+
+    return M,V,C
+    
+
+def gSat(nargin,nargout,m, v, i, e):
+    d = m.size
+    I = i.size
+    i = i.reshape([-1,1]).T;
+    if nargin < 4:
+        e = np.ones([1, I])
+    e = e.reshape([-1,1]).T
+    
+    P = np.vstack([np.eye(d), 3*np.eye(d)]);
+    
+    ma = P.dot(m)
+    madm = P;
+    va = P.dot(v).dot(P.T)
+    vadv = np.kron(P,P)
+    va = (va+va.T)/2;
+    
+    [M2, S2, C2, Mdma, Sdma, Cdma, Mdva, Sdva, Cdva] = gSin(4,9,ma, va, np.hstack([i, d+i]), np.hstack([9*e, e])/8);
+
+    P = np.hstack([np.eye(I), np.eye(I)])
+    Q = np.hstack([np.eye(d), 3*np.eye(d)])
+    M = P.dot(M2);                                                # mean
+    S = P.dot(S2).dot(P.T)
+    S = (S+S.T)/2;                                    # variance
+    C = Q.dot(C2).dot(P.T)                                    # inv(v) times input-output cov
+
+    if nargout > 3:                                      # derivatives if required
+        dMdm = P.dot(Mdma).dot(madm);         
+        dMdv = P.dot(Mdva).dot(vadv);
+        
+        dSdm = np.kron(P,P).dot(Sdma).dot(madm) 
+        dSdv = np.kron(P,P).dot(Sdva).dot(vadv)
+        
+        dCdm = np.kron(P,Q).dot(Cdma).dot(madm) 
+        dCdv = np.kron(P,Q).dot(Cdva).dot(vadv)
+                
+        return M, S, C, dMdm, dSdm, dCdm, dMdv, dSdv, dCdv
+    
+    return M,S,C
 
 
 def conCat(nargout,con, sat, policy, m, s):
@@ -1246,12 +1734,14 @@ def conCat(nargout,con, sat, policy, m, s):
     S[np.ix_(i,i)] = s
     
     if nargout < 4:
-        [M[j], S[np.ix_(j,j)], Q] = con(policy, m, s);  # compute unsquashed control signal v
+        [M[j], S[np.ix_(j,j)], Q] = con(3,policy, m, s);  # compute unsquashed control signal v
         q = S[np.ix_(i,i)].dot(Q)
         S[np.ix_(i,j)] = q
         S[np.ix_(j,i)] = q.T  # compute joint covariance S=cov(x,v)
-        [M, S, R] = sat(M, S, j, maxU);         # compute squashed control signal u
+        [M, S, R] = sat(4,3,M, S, j, maxU);         # compute squashed control signal u
         C = np.hstack([np.eye(D),Q]).dot(R);                       # inv(s)*cov(x,u)
+        if nargout == 1:
+            return M
     else:
         Mdm = np.zeros([F,D])
         Sdm = np.zeros([F*F,D])
@@ -1272,37 +1762,157 @@ def conCat(nargout,con, sat, policy, m, s):
         ji=XT[I==1].T;
         
 #          % 1. Unsquashed controller --------------------------------------------------
-        con(12,policy, m, s)
-#          [M[j], S[np.ix_(j,j)], Q, Mdm[j,:], Sdm[jj,:], dQdm, Mds[j,:], Sds[jj,:], dQds, Mdp, Sdp, dQdp] = con(policy, m, s);
-#          q = S(i,i)*Q; S(i,j) = q; S(j,i) = q';  % compute joint covariance S=cov(x,v)
-#          
+#        con(12,policy, m, s)
+        [M[j], S[np.ix_(j,j)], Q, Mdm[j,:], Sdm[jj,:], dQdm, Mds[j,:], Sds[jj,:], dQds, Mdp, Sdp, dQdp] = con(12,policy, m, s);
+        q = S[np.ix_(i,i)].dot(Q)
+        S[np.ix_(i,j)] = q
+        S[np.ix_(j,i)] = q.T;  # compute joint covariance S=cov(x,v)
+        
 #          % update the derivatives
-#          SS = kron(eye(E),S(i,i)); QQ = kron(Q',eye(D));
-#          Sdm(ij,:) = SS*dQdm;      Sdm(ji,:) = Sdm(ij,:);
-#          Sds(ij,:) = SS*dQds + QQ; Sds(ji,:) = Sds(ij,:);
-#          
+        SS = np.kron(np.eye(E),S[np.ix_(i,i)])
+        QQ = np.kron(Q.T,np.eye(D))
+        
+        Sdm[ij,:] = SS.dot(dQdm)
+        Sdm[ji,:] = Sdm[ij,:]
+        
+        Sds[ij,:] = SS.dot(dQds) + QQ
+        Sds[ji,:] = Sds[ij,:]
+                
 #          % 2. Apply Saturation -------------------------------------------------------
-#          [M, S, R, MdM, SdM, RdM, MdS, SdS, RdS] = sat(M, S, j, maxU);
-#          
+        [M, S, R, MdM, SdM, RdM, MdS, SdS, RdS] = sat(4,9,M, S, j, maxU)
+          
 #          % apply chain-rule to compute derivatives after concatenation
-#          dMdm = MdM*Mdm + MdS*Sdm; dMds = MdM*Mds + MdS*Sds;
-#          dSdm = SdM*Mdm + SdS*Sdm; dSds = SdM*Mds + SdS*Sds;
-#          dRdm = RdM*Mdm + RdS*Sdm; dRds = RdM*Mds + RdS*Sds;
-#          
-#          dMdp = MdM(:,j)*Mdp + MdS(:,jj)*Sdp;
-#          dSdp = SdM(:,j)*Mdp + SdS(:,jj)*Sdp;
-#          dRdp = RdM(:,j)*Mdp + RdS(:,jj)*Sdp;
-#          
-#          C = [eye(D) Q]*R; % inv(s)*cov(x,u)
+        dMdm = MdM.dot(Mdm) + MdS.dot(Sdm)
+        dMds = MdM.dot(Mds) + MdS.dot(Sds)
+        dSdm = SdM.dot(Mdm) + SdS.dot(Sdm)
+        dSds = SdM.dot(Mds) + SdS.dot(Sds)
+        dRdm = RdM.dot(Mdm) + RdS.dot(Sdm)
+        dRds = RdM.dot(Mds) + RdS.dot(Sds)
+
+            
+        dMdp = MdM[:,j].dot(Mdp) + MdS[:,jj].dot(Sdp)
+        dSdp = SdM[:,j].dot(Mdp) + SdS[:,jj].dot(Sdp)
+        dRdp = RdM[:,j].dot(Mdp) + RdS[:,jj].dot(Sdp)
+          
+        C = np.hstack([np.eye(D), Q]).dot(R); # inv(s)*cov(x,u)
 #          % update the derivatives
-#          RR = kron(R(j,:)',eye(D)); QQ = kron(eye(E),[eye(D) Q]);
-#          dCdm = QQ*dRdm + RR*dQdm;
-#          dCds = QQ*dRds + RR*dQds;
-#          dCdp = QQ*dRdp + RR*dQdp;
+        RR = np.kron(R[j,:].T,np.eye(D))
+        QQ = np.kron(np.eye(E),np.hstack([np.eye(D), Q]))
+        dCdm = QQ.dot(dRdm) + RR.dot(dQdm)
+        dCds = QQ.dot(dRds) + RR.dot(dQds)
+        dCdp = QQ.dot(dRdp) + RR.dot(dQdp)
+        
+        return M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds,  dMdp, dSdp, dCdp
+   
+    return M,S,C
 
     
+def sliceModel(dynmodel,n,ii,D1,D2,D3): #separate sub-dynamics
+    if (dynmodel.sub != 0):
+        dyn = dynmodel.sub[n]
+        do = dyn.dyno
+        D = np.size(ii)+D1-D2
+        if (dyn.dyni != []):di=dyn.dyni
+        else: di=[];
+        if (dyn.dynu != []):du=dyn.dynu
+        else: du=[];
+        if (dyn.dynj != []):dj=dyn.dynj
+        else: dj=[];
+        i = np.hstack([ii[di], D1+du, D2+dj])
+        k = D2+do
+        dyn.inputs = np.hstack([dynmodel.inputs[:,np.hstack([di, D+du])], dynmodel.target[:,dj]]); # inputs
+        dyn.target = dynmodel.target[:,do];                                 #targets
+    else:
+        dyn = dynmodel;
+        k = np.arange(D2,D3)
+        i = ii;
 
-def propagated(m, s, plant, dynmodel, policy):
+    return dyn, i, k
+
+
+def propagate(m, s, plant, dynmodel, policy):
+    angi = plant.angi
+    poli = plant.poli
+    dyni = plant.dyni
+    difi = plant.difi
+    
+    D0 = len(m);                #size of the input mean
+    D1 = D0 + 2*len(angi);          #length after mapping all angles to sin/cos
+    D2 = D1 + len(policy.maxU)     #length after computing control signal
+    D3 = D2 + D0;                      #length after predicting
+    M = np.zeros([D3,1])
+    M[0:D0] = m
+    S = np.zeros([D3,D3])
+    S[0:D0,0:D0] = s   #init M and S
+  
+    i = np.arange(D0)
+    j = np.arange(D0)
+    k = np.arange(D0,D1);
+    
+    [M[k], S[np.ix_(k,k)], C] = gTrig(M[i], S[np.ix_(i,i)], angi,3);
+    q = S[np.ix_(j,i)].dot(C)
+    S[np.ix_(j,k)] = q;
+    S[np.ix_(k,j)] = q.T;
+    
+    sn2 = np.exp(2*dynmodel.hyp[-1,:])
+    sn2[difi] = sn2[difi]/2
+    
+    mm=np.zeros([D1,1])
+    mm[i]=M[i]
+    ss[np.ix_(i,i)]=S[np.ix_(i,i)]+np.diag(sn2);
+    [mm[k], ss[np.ix_(k,k)], C] = gTrig(mm[i], ss[np.ix_(i,i)], angi,3); #noisy state measurement
+    q = ss[np.ix_(j,i)].dot(C)
+    ss[np.ix_(j,k)] = q;
+    ss[np.ix_(k,j)] = q.T;
+    
+    i = poli
+    j = np.arange(D1)
+    k = np.arange(D1,D2)
+    
+    policy.fcn = [conCat,[congp,gSat]]
+    [M[k], S[np.ix_(k,k)], C] = policy.fcn[0](3,policy.fcn[1][0],policy.fcn[1][1],policy, mm[i], ss[np.ix_(i,i)])
+    q = S[np.ix_(j,i)].dot(C)
+    S[np.ix_(j,k)] = q;
+    S[np.ix_(k,j)] = q.T;
+
+    ii = np.hstack([dyni, np.arange(D1,D2)])
+    j = np.arange(D2);
+    
+    if(dynmodel.sub != 0):
+        Nf = np.size(dynmodel.sub)
+    else:
+        Nf = 1
+
+    for n in range(Nf):                               # potentially multiple dynamics models
+        [dyn, i, k] = sliceModel(dynmodel,n,ii,D1,D2,D3);
+        j = np.setdiff1d(j,k)
+
+        [M[k], S[np.ix_(k,k)], C] = dyn.fcn(3,3,dyn,M[i],S[np.ix_(i,i)]);
+  
+        q = S[np.ix_(j,i)].dot(C)
+        S[np.ix_(j,k)] = q;
+        S[np.ix_(k,j)] = q.T;
+
+        j = np.hstack([j, k]);
+
+    P = np.hstack([np.zeros([D0,D2]), np.eye(D0)])
+    P[np.ix_(difi,difi)] = np.eye(np.size(difi));
+
+    Mnext = P.dot(M); 
+    Snext = P.dot(S).dot(P.T);
+    Snext = (Snext+Snext.T)/2;
+    
+    return Mnext, Snext
+
+    
+    
+def propagated(m, s, plant, dynmodel, policy,nargout=8):
+    
+    if nargout <= 2:      #just predict, no derivatives
+        [Mnext, Snext] = propagate(m, s, plant, dynmodel, policy);
+        return Mnext,Snext
+
+    
     angi = plant.angi
     poli = plant.poli
     dyni = plant.dyni
@@ -1333,11 +1943,10 @@ def propagated(m, s, plant, dynmodel, policy):
     j = np.arange(D0)
     k = np.arange(D0,D1);
     
-    gTrig(M[i], S[np.ix_(i,i)], angi,9);
     
     [M[k], S[np.ix_(k,k)], C, mdm, sdm, Cdm, mds, sds, Cds] = gTrig(M[i], S[np.ix_(i,i)], angi,9);
     
-    [S, Mdm, Mds, Sdm, Sds] = fillIn(5,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,[ ],[ ],[ ],i,j,k,D3)
+    [S, Mdm, Mds, Sdm, Sds] = fillIn(16,5,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,[ ],[ ],[ ],i,j,k,D3)
 
     sn2 = np.exp(2*dynmodel.hyp[-1,:])
     sn2[difi] = sn2[difi]/2
@@ -1354,46 +1963,92 @@ def propagated(m, s, plant, dynmodel, policy):
     j = np.arange(D1)
     k = np.arange(D1,D2)
     
-    policy.fcn = [conCat,[congp]]
-    policy.fcn[0](12,policy.fcn[1][0],0,policy, mm[i], ss[np.ix_(i,i)])
-#    [M[k], S[np.ix_(k,k)], C, mdm, sdm, Cdm, mds, sds, Cds, Mdp, Sdp, Cdp] = policy.fcn(policy, mm[i], ss[np.ix_(i,i)])
+    policy.fcn = [conCat,[congp,gSat]]
+    [M[k], S[np.ix_(k,k)], C, mdm, sdm, Cdm, mds, sds, Cds, Mdp, Sdp, Cdp] = policy.fcn[0](12,policy.fcn[1][0],policy.fcn[1][1],policy, mm[i], ss[np.ix_(i,i)])
 
-
-
-#    [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,Cdp,i,j,k,D3);
-
+    [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(19,7,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,Cdp,i,j,k,D3);
     
-    return 0,0,0,0,0,0,0,0
+    ii = np.hstack([dyni, np.arange(D1,D2)])
+    j = np.arange(D2);
+    
+    if(dynmodel.sub != 0):
+        Nf = np.size(dynmodel.sub)
+    else:
+        Nf = 1
+        
+    for n in range(Nf):                               # potentially multiple dynamics models
+        [dyn, i, k] = sliceModel(dynmodel,n,ii,D1,D2,D3);
+        j = np.setdiff1d(j,k)
+        
+        [M[k], S[np.ix_(k,k)], C, mdm, sdm, Cdm, mds, sds, Cds] = dyn.fcn(3,9,dyn,M[i],S[np.ix_(i,i)]);
+        
+        [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(18,7,S,C,mdm,sdm,Cdm,mds,sds,Cds,Mdm,Sdm,Mds,Sds,Mdp,Sdp,[ ],i,j,k,D3);
+
+        j = np.hstack([j, k]);
+    
+    P = np.hstack([np.zeros([D0,D2]), np.eye(D0)])
+    P[np.ix_(difi,difi)] = np.eye(np.size(difi));
+
+    Mnext = P.dot(M); 
+    Snext = P.dot(S).dot(P.T);
+    Snext = (Snext+Snext.T)/2;
+
+    PP = np.kron(P,P);
+    dMdm =  P.dot(Mdm)
+    dMds =  P.dot(Mds)
+    dMdp =  P.dot(Mdp)
+    
+    dSdm = PP.dot(Sdm)
+    dSds = PP.dot(Sds)
+    dSdp = PP.dot(Sdp)
+
+    X = np.reshape(np.arange(D0*D0),[D0, D0],order = 'F');
+    XT = X.T;     #symmetrize dS
+    dSdm = (dSdm + dSdm[XT.reshape([-1]),:])/2;
+    dMds = (dMds + dMds[:,XT.reshape([-1])])/2;
+    
+    dSds = (dSds + dSds[XT.reshape([-1]),:])/2;
+    dSds = (dSds + dSds[:,XT.reshape([-1])])/2;
+    
+    dSdp = (dSdp + dSdp[XT.reshape([-1]),:])/2;
+    
+        
+    return Mnext, Snext, dMdm, dSdm, dMds, dSds, dMdp, dSdp
 
 
 def value(p, m0, S0, dynmodel, policy, plant, cost, H):
+    
+    policy.param = copy.deepcopy(p)
+    p = unwrap(p);
+    
     dp = 0*p;
     m = m0
     S = S0
     L = np.zeros([1,H]);
     
-    #間違ってるかも
-    #pをpolicyに反映しないといけない？
+
     
     dmOdp = np.zeros([np.size(m0,0), len(p)]);
     dSOdp = np.zeros([np.size(m0,0)* np.size(m0,0), len(p)]);
    
-#    print(dmOdp.shape,dSOdp.shape)
-#    for t in range(H): # for all time steps in horizon
-    for t in range(1): # for all time steps in horizon
+    for t in range(H): # for all time steps in horizon
         [m, S, dmdmO, dSdmO, dmdSO, dSdSO, dmdp, dSdp] = plant.prop(m, S, plant, dynmodel, policy) # get next state
-#    
-#        dmdp = dmdmO.dot(dmOdp) + dmdSO.dot(dSOdp) + dmdp;
-#        dSdp = dSdmO.dot(dmOdp) + dSdSO.dot(dSOdp) + dSdp;
-#    
-#        [L[t], dLdm, dLdS] = cost.fcn(cost, m, S);              #predictive cost
-#        L[t] = cost.gamma**t * L[t];                             # discount
-#        dp = dp + cost.gamma**t *( dLdm[:]*dmdp + dLdS[:].T*dSdp ).T;
-#    
-#        dmOdp = dmdp; dSOdp = dSdp;                              #bookkeeping
-#  
     
-    return 0,0
+        dmdp = dmdmO.dot(dmOdp) + dmdSO.dot(dSOdp) + dmdp;
+        dSdp = dSdmO.dot(dmOdp) + dSdSO.dot(dSOdp) + dSdp;
+    
+        [L[0,t], dLdm, dLdS,tmp] = cost.fcn(cost, m, S);              #predictive cost
+
+        L[0,t] = cost.gamma**t * L[0,t];                             # discount
+        dp = dp + cost.gamma**t *( dLdm.reshape([-1,1],order = 'F').T.dot(dmdp) + dLdS.reshape([-1,1],order = 'F').T.dot(dSdp) ).T;
+
+        dmOdp = np.copy(dmdp);
+        dSOdp = np.copy(dSdp);                              #bookkeeping
+
+    J = np.sum(L,keepdims = True)
+    dJdp = rewrap(policy.param, dp);
+    
+    return J, dJdp
           
     
 def trainDynModel():
@@ -1411,18 +2066,61 @@ def trainDynModel():
     print('Learned noise std: ' ,np.exp(Xh[-1,:]))
     print('SNRs             : ' ,np.exp(Xh[-2,:]-Xh[-1,:]))
 
-def learnPolicy():
+
+def pred(policy, plant, dynmodel, m, s, H):
+
+    D = np.size(m)
+    S = np.zeros([D,D,H+1])
+    M = np.zeros([D,H+1])
+    M[:,0:1] = m
+    S[:,:,0] = s
+    for i in range(H):
+        [m, s] = plant.prop(m, s, plant, dynmodel, policy,2);
+        M[:,i+1:i+2] = m[-D:,0:1]; 
+        S[:,:,i+1] = s[-D:,-D:];
+    return M,S
+
+
+def calcCost(cost, M, S):
+
+    H = np.size(M,1);           # horizon length
+    L = np.zeros([1,H])
+    SL = np.zeros([1,H])
+    
+
+#% for each time step, compute the expected cost and its variance
+    for h in range(H):
+        [L[0,h],d1,d2,SL[0,h]]  = cost.fcn(cost, M[:,h:h+1], S[:,:,h]);
+
+    sL = np.sqrt(SL); 
+
+    return L, sL
+
+def learnPolicy(j):
+    global M,Sigma
     opt.fh = 1;
 #    unwrap(policy.p)
 
-    #アンラッピング
-    X=unwrap(policy.param)
-    
-#    f2(0,value, X, mu0Sim, S0Sim, dynmodel, policy, plant, cost, H)
-#    [fx,dfx] = f2(2,X)
-    po_own = PolicyOptimizer(X, mu0Sim, S0Sim, dynmodel, policy, plant, cost, H)
-    po_own.targetFunc(X)
 
+    X_fmt=policy.param
+    X0 = unwrap(X_fmt)[:,0]
+    
+    po_own = PolicyOptimizer(X_fmt, mu0Sim, S0Sim, dynmodel, policy, plant, cost, H)
+    
+    result = scipy.optimize.minimize(po_own.targetFunc,X0,jac=po_own.targetFunc_dev,method='BFGS',options={'maxiter': 5, 'disp': False})
+    
+    policy.param = rewrap(policy.param,result['x'])
+    fX3 = result['fun']
+    
+    [M[j],Sigma[j]] = pred(policy, plant, dynmodel, mu0Sim[:,0:1], S0Sim, H)
+
+    [fantasy.mean[j], fantasy.std[j]] = calcCost(cost, M[j], Sigma[j])
+    
+def applyController(j):
+    global realCost,latent
+    HH = H
+    [xx, yy, realCost[j+J], latent[j]] = rollout(gaussian(mu0, S0),policy,HH,plant,cost,4)
+    
 
 np.random.seed(1)
 
@@ -1454,6 +2152,7 @@ cost.fcn = loss_cp
 plant.prop = propagated
 
 dynmodel.induce = np.zeros([300,0,1])
+dynmodel.fcn = gp1d
 
 trainOpt = np.array([[300, 500]]);
 
@@ -1463,8 +2162,8 @@ x = 0
 y = 0
 fantasy.mean = [[]] * N
 fantasy.std = [[]] * N
-realCost = [[]]*N;
-latent = [[]];
+realCost = [[]]*(N+1);
+latent = [[]]*N;
 M =  [[]]*N;
 Sigma =  [[]]*N;
 
@@ -1478,16 +2177,20 @@ for jj in range(J):
     x = np.vstack([x, xx])
     y = np.vstack([y, yy])
     
-#drawer.main(latent)
+drawer.main(latent)
 
 mu0Sim = mu0[dyno-1]
 S0Sim = S0[np.ix_(dyno-1,dyno-1)]
 
+gp0.oldX = np.empty(0)
+gp2.oldX = np.empty(0)
 gp2d.oldX = np.empty(0)
+gp0d.oldX = np.empty(0)
 
-for j in range(1):
+for j in range(N):
     print(j)
     trainDynModel()
-    learnPolicy()
+    learnPolicy(j)
+    applyController(j)
 
 print("end")
