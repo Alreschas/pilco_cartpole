@@ -3,6 +3,7 @@ import numpy as np
 
 from GP import gp2d
 from GP import gp2
+from utility import gSin
 
 
 def conCat(nargout,con, sat, policy, m, s):
