@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+import numpy.matlib
 import scipy.optimize
 
-import numpy.matlib
 
 from utility import unwrap,rewrap
 
@@ -201,6 +201,7 @@ def covSum(nargin,nargout,covfunc, logtheta, x, z):
             A = f(3,1,logtheta[(v==i).T], x, j);  #compute derivative
             return A
  
+    print('error')
     return 0,0
 
 class Curb:
@@ -230,10 +231,13 @@ def train(gpmodel, dump):
     print("Train hyper-parameters of full GP ...")
     
     for i in range(E):
+        print('GP learn:',i)
         gp_own = GaussianProcess(lh[:,i],covfunc, gpmodel.inputs, gpmodel.targets[:,i], curb)
         result = scipy.optimize.minimize(gp_own.targetFunc,lh[:,i],jac=gp_own.targetFunc_dev,method='BFGS')
         gpmodel.hyp[:,i] = result['x']
         train.nlml[i] = result['fun']
+    
+
     
     [N, D] = gpmodel.inputs.shape; 
     [M, uD, uE] = gpmodel.induce.shape;
@@ -242,6 +246,7 @@ def train(gpmodel, dump):
         return    # if too few training examples, we don't need FITC
  
 
+#ダイナミクスの学習
 def trainDynModel(dynmodel,policy,plant,x,y):
 
     dyno = plant.dyno 
@@ -251,14 +256,15 @@ def trainDynModel(dynmodel,policy,plant,x,y):
     
     Du = len(policy.maxU)
     Da = len(plant.angi) # no. of ctrl and angles
-    xaug = np.hstack([x[:,dyno-1], x[:,-Du-2*Da:-Du]])# x augmented with angles
-    dynmodel.inputs = np.hstack([xaug[:,dyni], x[:,-Du:]])
+    xaug = np.hstack([x[:,dyno], x[:,-Du-2*Da:-Du]])# x augmented with angles
     
-    dynmodel.targets = y[:,dyno-1];
-    dynmodel.targets[:,difi] = dynmodel.targets[:,difi] - x[:,dyno[difi]-1];
+    dynmodel.inputs = np.hstack([xaug[:,dyni], x[:,-Du:]])
+    dynmodel.targets = y[:,dyno];
+    dynmodel.targets[:,difi] = dynmodel.targets[:,difi] - x[:,dyno[difi]];
     
     train(dynmodel,plant)
     
     Xh = dynmodel.hyp;
+
     print('Learned noise std: ' ,np.exp(Xh[-1,:]))
     print('SNRs             : ' ,np.exp(Xh[-2,:]-Xh[-1,:]))

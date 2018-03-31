@@ -66,13 +66,11 @@ def gp0d(nargin,nargout,gpmodel, m, s):
         
   
 #  % compute K and inv(K) and beta
-        for i in range(E):
-            
+        for i in range(E):            
             inp = inputs/np.exp(X[:D,i]).T;
-            #TODO gp2dと微妙に違う
             gp0d.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
             if gpmodel.nigp != 0:
-                L = np.linalg.cholesky(gp0d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+                L = np.linalg.cholesky(gp0d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i]));
             else:
                 L = np.linalg.cholesky(gp0d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
     
@@ -229,13 +227,11 @@ def gp0(nargin,nargout,gpmodel,m,s):
         gp0.iK = np.copy(gp0.K)
         gp0.beta = np.zeros([n,E]);
 
-        for i in range(E):
-            
+        for i in range(E):            
             inp = inputs/np.exp(X[:D,i]).T;
-            #TODO gp0と微妙に違う
             gp0.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
             if gpmodel.nigp != 0:
-                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i]));
             else:
                 L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
     
@@ -330,7 +326,7 @@ def gp2(gpmodel, m, s):
         
         for i in range(E):
             inp = inputs/np.exp(X[:D,i]).T;
-            gp2.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
+            gp2.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
             if gpmodel.nigp != 0:
                 L = np.linalg.cholesky(gp2.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
             else:
@@ -381,6 +377,7 @@ def gp2d(nargout,gpmodel, m, s):
     targets = gpmodel.targets
     X = gpmodel.hyp;
     
+    
     if nargout < 4:
         print("error")
         [M, S, V] = gp2(gpmodel, m, s)
@@ -410,9 +407,9 @@ def gp2d(nargout,gpmodel, m, s):
 #  % compute K and inv(K) and beta
         for i in range(E):
             inp = inputs/np.exp(X[:D,i]).T;
-            gp2d.K[:,:,i] = np.exp(2*X[D,i])-maha(2,inp,inp,[])/2;
+            gp2d.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
             if gpmodel.nigp != 0:
-                L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i])).T;
+                L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i]));
             else:
                 L = np.linalg.cholesky(gp2d.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
     
@@ -452,7 +449,7 @@ def gp2d(nargout,gpmodel, m, s):
         c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(R))*np.exp(np.sum(X[:D,i]));
         
         detdX = np.diag(np.linalg.det(R)*iR.T * 2*np.exp(2*X[:D,i]))    # d(det R)/dX
-        cdX = -0.5*(c/np.linalg.det(R))*detdX.T+ c*np.ones([1,D]);      # derivs w.r.t length-scales
+        cdX = -0.5*(c/np.linalg.det(R))*(detdX.T)+ c*np.ones([1,D]);      # derivs w.r.t length-scales
 
         dldX = l*(t*2*np.exp(2*X[:D,i].T))*t/2;
   
@@ -477,7 +474,7 @@ def gp2d(nargout,gpmodel, m, s):
             sqdiBi = sqdi.dot(gp2d.beta[:,i:i+1]);
             tlbdi[:,d:d+1] = (sqdi.dot(liK)*gp2d.beta[:,i:i+1] + sqdiBi*liK);
             tlbdi2 = -tliK.dot((-sqdi * gp2d.beta[:,i:i+1]).T-np.diag(sqdiBi[:,0]));
-            dVdi[:,i,:,d] = c*(iR[:,d:d+1]*lb.T - (t * tlb[:,d:d+1]).T + tlbdi2)
+            dVdi[:,i,:,d] = c*(iR[:,d:d+1].dot(lb.T) - (t * tlb[:,d:d+1]).T + tlbdi2)
 
             dsqdX = (dsi[:,d:d+1] + dsi[:,d:d+1].T) + 4.*inp2[:,d:d+1]*inp2[:,d:d+1].T
             dKdX = -gp2d.K[:,:,i]*dsqdX/2;                               #dK/dX(1:D)
@@ -485,7 +482,7 @@ def gp2d(nargout,gpmodel, m, s):
             bdX[:,i,d:d+1] = -np.linalg.solve(K2,dKdXbeta);                        # dbeta/dX
             dslb[0,d] = -liK.T.dot(dKdXbeta) + gp2d.beta[:,i:i+1].T.dot(dldX[:,d:d+1]);
             dlb = dldX[:,d:d+1]*gp2d.beta[:,i:i+1] + l*bdX[:,i,d:d+1];
-            dtdX = inp.dot(-(iR[:,d:d+1] * 2*np.exp(2*X[d,i])*iR[d:d+1,:]));
+            dtdX = inp.dot(-(iR[:,d:d+1] * (2*np.exp(2*X[d,i])*iR[d:d+1,:])));
             dlbt = lb.T.dot(dtdX) + dlb.T.dot(t);
             dVdX[:,i,d,i:i+1] = (dlbt.T*c + cdX[0,d]*(lb.T.dot(t)).T);
 
@@ -537,7 +534,7 @@ def gp2d(nargout,gpmodel, m, s):
             zi = np.linalg.solve(R.T,ii.T).T
             zj = np.linalg.solve(R.T,ij.T).T
     
-            tdX  = -0.5*t*np.sum(iR.T*(s * (-2*np.exp(-2*X[:D,i:i+1].T)-2*np.exp(-2*X[:D,i].T))),axis=0);
+            tdX  = -0.5*t*np.sum(iR.T*(s * (-2*np.exp(-2*X[:D,i:i+1].T)-2*np.exp(-2*X[:D,i:i+1].T))),axis=0);
             tdXi = -0.5*t*np.sum(iR.T*(s * -2*np.exp(-2*X[:D,i:i+1].T)),axis=0);
             tdXj = -0.5*t*np.sum(iR.T*(s * -2*np.exp(-2*X[:D,j:i+1].T)),axis=0);
             bLiKi = gp2d.iK[:,:,j].dot(L.T.dot(gp2d.beta[:,i:i+1]))
@@ -644,7 +641,7 @@ def gp2d(nargout,gpmodel, m, s):
                 dSdX[i,j,:,i] = np.reshape(dSdX[i,j,:,i],[1,D+2],order='F') - M[i,0]*dMdX[j,:,j]-M[j]*dMdX[i,:,i];
             else:
                 dSdt[i,j,:,i] = np.linalg.solve(K2.T,(gp2d.beta[:,j:j+1].T.dot(L.T)).T).T*t - dMdt[i,:,i]*M[j,0];
-                dSdt[i,j,:,j] = np.linalg.solve((K[:,:,j]+np.exp(2*X[D+1,j])*np.eye(n)).T,(gp2d.beta[:,i:i+1].T.dot(L)).T).T*t - dMdt[j,:,j]*M[i,0]
+                dSdt[i,j,:,j] = np.linalg.solve((gp2d.K[:,:,j]+np.exp(2*X[D+1,j])*np.eye(n)).T,(gp2d.beta[:,i:i+1].T.dot(L)).T).T*t - dMdt[j,:,j]*M[i,0]
                 dSdt[j,i,:,:] = dSdt[i,j,:,:]
                 dSdX[i,j,:,j] = np.reshape(dSdX[i,j,:,j],[1,D+2],order = 'F') - M[i,0]*dMdX[j,:,j]
                 dSdX[i,j,:,i] = np.reshape(dSdX[i,j,:,i],[1,D+2],order = 'F') - M[j,0]*dMdX[i,:,i]
@@ -688,3 +685,74 @@ def gp2d(nargout,gpmodel, m, s):
 
     return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds, dMdi, dSdi, dVdi,dMdt, dSdt, dVdt, dMdX, dSdX, dVdX
   
+    
+if __name__ == '__main__':
+    init_gp()
+    
+    class GpModel:
+        def __init__(self):
+            self.nigp = 0
+            self.inputs = np.arange(1,51).reshape([10,5],order='F')
+            self.targets = np.arange(1,11).reshape([10,1],order='F')
+            self.hyp = 1*np.arange(1,8).reshape([7,1],order='F');
+            self.induce = np.empty(0)
+    gpmodel = GpModel()
+    m = np.arange(1,6).reshape([5,1],order='F')
+    s = np.arange(1,26).reshape([5,5],order='F')
+    
+    [M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds, dMdi, dSdi, dVdi,dMdt, dSdt, dVdt, dMdX, dSdX, dVdX] = gp2d(18,gpmodel,m,s)
+
+    gpmodel.hyp = 0.5*np.arange(5,12).reshape([7,1],order='F');
+    m = np.arange(5,10).reshape([5,1],order='F')
+    s = np.arange(7,32).reshape([5,5],order='F')
+    [M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds, dMdi, dSdi, dVdi,dMdt, dSdt, dVdt, dMdX, dSdX, dVdX] = gp2d(18,gpmodel,m,s)
+
+    [M2, S2, V2, dMdm2, dSdm2, dVdm2, dMds2, dSds2, dVds2 ] = gp0d(3,9,gpmodel,m,s)
+    
+#    print(M2-M)
+    print(S2-S)
+#    print(V2-V)
+#    print(dMdm2-dMdm)
+    print(dSdm2-dSdm)
+#    print(dVdm2-dVdm)
+#    print(dMds2-dMds)
+#    print(dSds2-dSds)
+#    print(dVds2-dVds)
+#    print('M')
+#    print(M)
+#    print('S')
+#    print(S.sum())
+#    print('V')
+#    print(V.sum())
+#    print('dMdm')
+#    print(dMdm.sum())
+#    print('dSdm')
+#    print(dSdm.sum())
+#    print('dVdm')
+#    print(dVdm.sum())
+#    print('dMds')
+#    print(dMds.sum())
+#    print('dSds')
+#    print(dSds.sum())
+#    print('dVds')
+#    print(dVds.sum())
+#    print('dMdi')
+#    print(dMdi.sum())
+#    print('dSdi')
+#    print(dSdi.sum())
+#    print('dVdi')
+#    print(dVdi[:,0:4])
+#    print('dMdt')
+#    print(dMdt.sum())
+#    print('dSdt')
+#    print(dSdt.sum())
+#    print('dVdt')
+#    print(dVdt.sum())
+#    print('dMdX')
+#    print(dMdX.sum())
+#    print('dSdX')
+#    print(dSdX)
+#    print('dVdX')
+#    print(dVdX.sum())
+    
+    

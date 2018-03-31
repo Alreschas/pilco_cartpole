@@ -88,7 +88,7 @@ def rollout(start, policy, H, plant, cost,nargout):
     dyno = plant.dyno
     angi = plant.angi
     simi = np.sort(np.hstack([odei, subi]));
-    simi = np.array(simi-1,dtype='int')
+    simi = np.array(simi,dtype='int')
     nX = len(simi)+len(augi)
     nU = len(policy.maxU)
     nA = len(angi);
@@ -99,8 +99,8 @@ def rollout(start, policy, H, plant, cost,nargout):
     
     x = np.zeros([H+1, nX+2*nA]);
 
-#    x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
-    x[0,simi] = start.T + np.ones([1,np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T) #  for debug
+    x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+#    x[0,simi] = start.T + np.ones([1,np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T) #  for debug
     x[0,augi] = plant.augment(x[1,:]);
     
     u = np.zeros([H, nU])
@@ -110,7 +110,7 @@ def rollout(start, policy, H, plant, cost,nargout):
     _next = np.zeros([1,len(simi)]); 
   
     for i in range(H):
-        s = np.array([x[i,dyno-1]]).T
+        s = np.array([x[i,dyno]]).T
         sa = gTrig(s, np.zeros([len(s),len(s)]), angi)[0]
         s = np.vstack([s,sa])
 
@@ -123,17 +123,17 @@ def rollout(start, policy, H, plant, cost,nargout):
 
         latent[i,:] = np.hstack([state, u[i:i+1,:]]);
 
-        _next[0,odei-1] = simulate(state[0,odei-1], u[i,:], plant);
+        _next[0,odei] = simulate(state[0,odei], u[i,:], plant);
         if subi != []:
-            _next[0,subi-1] = plant.subplant(state, u[i,:]);
+            _next[0,subi] = plant.subplant(state, u[i,:]);
         state[0,simi] = _next[0,simi]; 
         state[0,augi] = plant.augment(state);
-#        x[i+1,simi] = state[simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
-        x[i+1,simi] = state[0,simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
+        x[i+1,simi] = state[0,simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+#        x[i+1,simi] = state[0,simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
         x[i+1,augi] = plant.augment(x[i+1,:]);
         
         if nargout > 2:
-            L[0,i] = (cost.fcn(cost,state[:,dyno-1].T,np.zeros([len(dyno),len(dyno)])))[0]
+            L[0,i] = (cost.fcn(cost,state[:,dyno].T,np.zeros([len(dyno),len(dyno)])))[0]
         
 
     y = x[1:H+1,0:nX]
@@ -152,12 +152,12 @@ def gaussian(m, S, *n):
     else:
         n = n[0]
 
-#    tmp = np.random.randn(np.size(S,1),n)
-    tmp = np.ones([np.size(S,1),n])#for debug
+    tmp = np.random.randn(np.size(S,1),n)
+#    tmp = np.ones([np.size(S,1),n])#for debug
     x = m[...,:] + np.linalg.cholesky(S).dot(tmp);
 
     return x
 
-def applyController(j,H,J,policy,plant,cost,mu0,S0,realCost,latent):
-    HH = H
-    [xx, yy, realCost[j+J], latent[j]] = rollout(gaussian(mu0, S0),policy,HH,plant,cost,4)
+def applyController(HH,policy,plant,cost,mu0,S0):
+    [xx, yy, realCost, latent] = rollout(gaussian(mu0, S0),policy,HH,plant,cost,4)
+    return xx,yy,realCost,latent

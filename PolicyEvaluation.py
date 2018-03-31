@@ -4,12 +4,15 @@ import numpy as np
 
 from utility import gTrig
 
+#飽和コスト
 def lossSat(cost, m, s,nargout=5):
     D = len(m) # get state dimension
-    W = cost.W
-    z = cost.z
-    SW = s.dot(W);
+    W = cost.W #W = T^-1
+    z = cost.xtgt#目標
     
+    #式(47)
+    SW = s.dot(W);
+    #W(I+SW)^-1
     iSpW = np.linalg.solve((np.eye(D)+SW).T,W.T).T;
 
 #% 1. Expected cost
@@ -63,12 +66,12 @@ def lossSat(cost, m, s,nargout=5):
         return L, dLdm, dLds, S, dSdm, dSds, C, dCdm, dCds
 
 
-
+#コスト関数
 def loss_cp(cost, m, s):
     cw = cost.width
     b =  cost.expl
     D0 = np.size(s,1) # state dimension
-    D1 = D0 + 2*len(cost.angle) #state dimension (with sin/cos)
+    D1 = D0 + 2*np.size(cost.angle) #state dimension (with sin/cos)
     
     
     M = np.zeros([D1,1])
@@ -121,8 +124,8 @@ def loss_cp(cost, m, s):
 
         S[np.ix_(i,k)] = S[np.ix_(i,i)].dot(C)
         S[np.ix_(k,i)] = S[np.ix_(i,k)].T                      # off-diagonal
-        SS = np.kron(np.eye(len(k)),S[np.ix_(i,i)])
-        CC = np.kron(C.T,np.eye(len(i)))
+        SS = np.kron(np.eye(np.size(k)),S[np.ix_(i,i)])
+        CC = np.kron(C.T,np.eye(np.size(i)))
         Sdm[ik,:] = SS.dot(dCdm) + CC.dot(Sdm[ii,:])
         Sdm[ki,:] = Sdm[ik,:]
         Sds[ik,:] = SS.dot(dCds) + CC.dot(Sds[ii,:])
@@ -133,9 +136,9 @@ def loss_cp(cost, m, s):
     dLds = np.zeros([1,D0*D0])
     S2 = 0;
     
-    for i in range(len(cw)):                    # scale mixture of immediate costs
-        cost.z = target
-        cost.W = Q/cw[i]**2;
+    for i in range(np.size(cw)):                    # scale mixture of immediate costs
+        cost.xtgt = target
+        cost.W = Q/(cw[i]**2);
         [r, rdM, rdS, s2, s2dM, s2dS] = lossSat(cost, M, S, 6);
 
         L = L + r
@@ -146,14 +149,13 @@ def loss_cp(cost, m, s):
         dLds = dLds + np.reshape(rdM,[-1,1],order='F').T.dot(Mds) + np.reshape(rdS,[-1,1],order='F').T.dot(Sds);
 
 
-        if (b!=0 or b == []) and abs(s2)>1e-12 :
+        if (abs(s2)>1e-12) :
             L = L + b*np.sqrt(s2);
-            print("error")
-#            dLdm = dLdm + b/sqrt(s2) * ( s2dM(:)'*Mdm + s2dS(:)'*Sdm )/2;
-#            dLds = dLds + b/sqrt(s2) * ( s2dM(:)'*Mds + s2dS(:)'*Sds )/2;
+            dLdm = dLdm + b/np.sqrt(s2) * ( s2dM.reshape([-1,1],order = 'F').T.dot(Mdm) + s2dS.reshape([-1,1],order = 'F').T.dot(Sdm) )/2;
+            dLds = dLds + b/np.sqrt(s2) * ( s2dM.reshape([-1,1],order = 'F').T.dot(Mds) + s2dS.reshape([-1,1],order = 'F').T.dot(Sds) )/2;
 
     # normalize
-    n = len(cw)
+    n = np.size(cw)
     L = L/n
     dLdm = dLdm/n
     dLds = dLds/n

@@ -115,9 +115,9 @@ def congp(nargout,policy, m, s):
         d2 = np.size(policy.hyp,0)
         dimU = np.size(policy.targets,1)
         sidx = np.atleast_2d(np.arange(d,d2)).T + np.atleast_2d(np.arange(0,dimU))*d2;#怪しい
-        dMdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
-        dSdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
-        dCdh[:,np.reshape(sidx,[np.size(sidx),1],order = 'F')] = 0
+        dMdh[:,np.reshape(sidx,[-1,1],order = 'F')] = 0
+        dSdh[:,np.reshape(sidx,[-1,1],order = 'F')] = 0
+        dCdh[:,np.reshape(sidx,[-1,1],order = 'F')] = 0
 
 ##        % 4. Merge derivatives
         dMdp = np.hstack([dMdh,dMdi,dMdt])
