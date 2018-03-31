@@ -7,29 +7,29 @@ from utility import gTrig
 #飽和コスト
 def lossSat(cost, m, s,nargout=5):
     D = len(m) # get state dimension
-    W = cost.W #W = T^-1
-    z = cost.xtgt#目標
+    iT = cost.iT #W = T^-1
+    xtgt = cost.xtgt#目標
     
     #式(47)
-    SW = s.dot(W);
-    #W(I+SW)^-1
-    iSpW = np.linalg.solve((np.eye(D)+SW).T,W.T).T;
+    SiT = s.dot(iT);
+    #(T^-1)(I+S(T^-1))^-1
+    S1 = np.linalg.solve((np.eye(D)+SiT).T,iT.T).T;
 
-#% 1. Expected cost
-    # in interval [-1,0]
-    L = -np.exp(-(m-z).T.dot(iSpW).dot(m-z)/2)/np.sqrt(np.linalg.det(np.eye(D)+SW))
+    #時刻tの期待コスト ([-1,0]の範囲) 式(46) -> 本関数一番下で、1を足す
+    L = -np.exp(-0.5*(m-xtgt).T.dot(S1).dot(m-xtgt))/np.sqrt(np.linalg.det(np.eye(D)+SiT))
 
-#% 1a. derivatives of expected cost
+    #期待コストの微分
     if nargout > 1:
-        dLdm = -L*((m-z).T).dot(iSpW)  # wrt input mean
-         # wrt input covariance matrix
-        dLds = L*(iSpW.dot(m-z).dot((m-z).T) - np.eye(D)).dot(iSpW)/2
+        #式(48) dE/dμ
+        dLdm = -L*((m-xtgt).T).dot(S1)
+        #式(49) dE/dΣ
+        dLds = 0.5*L*(S1.dot(m-xtgt).dot((m-xtgt).T) - np.eye(D)).dot(S1)
 
 #% 2. Variance of cost
     if nargout > 3:
-        i2SpW = np.linalg.solve((np.eye(D)+2*SW).T,W.T).T;
+        i2SpW = np.linalg.solve((np.eye(D)+2*SiT).T,iT.T).T;
         
-        r2 = np.exp(-(m-z).T.dot(i2SpW).dot(m-z))/np.sqrt(np.linalg.det(np.eye(D)+2*SW));
+        r2 = np.exp(-(m-xtgt).T.dot(i2SpW).dot(m-xtgt))/np.sqrt(np.linalg.det(np.eye(D)+2*SiT));
         S = r2 - L**2;
 
         if S < 1e-12:
@@ -39,21 +39,21 @@ def lossSat(cost, m, s,nargout=5):
 #% 2a. derivatives of variance of cost
     if nargout > 4:
     #  % wrt input mean
-        dSdm = -2*r2*((m-z).T).dot(i2SpW)-2*L*dLdm;
+        dSdm = -2*r2*((m-xtgt).T).dot(i2SpW)-2*L*dLdm;
     #  % wrt input covariance matrix
-        dSds = r2*(2*i2SpW.dot(m-z).dot((m-z).T)-np.eye(D)).dot(i2SpW)-2*L*dLds;
+        dSds = r2*(2*i2SpW.dot(m-xtgt).dot((m-xtgt).T)-np.eye(D)).dot(i2SpW)-2*L*dLds;
 
 #% 3. inv(s)*cov(x,L)
     if nargout > 6:
-        t = W.dot(z) - iSpW.dot(SW.dot(z)+m);
+        t = iT.dot(xtgt) - S1.dot(SiT.dot(xtgt)+m);
         C = L*t;
-        dCdm = t*dLdm - L*iSpW;
+        dCdm = t*dLdm - L*S1;
         print("error")
-#        dCds = -L*(bsxfun(@times,iSpW,permute(t,[3,2,1])) + ...
-#                                        bsxfun(@times,permute(iSpW,[1,3,2]),t'))/2;
+#        dCds = -L*(bsxfun(@times,S1,permute(t,[3,2,1])) + ...
+#                                        bsxfun(@times,permute(S1,[1,3,2]),t'))/2;
 #        dCds = bsxfun(@times,t,dLds(:)') + reshape(dCds,D,D^2);
 
-    L = 1+L # bring cost to the interval [0,1]
+    L = 1+L #式(46)
     if(nargout <= 1):
         return L
     if(nargout <= 3):
@@ -67,6 +67,7 @@ def lossSat(cost, m, s,nargout=5):
 
 
 #コスト関数
+#次状態の分布 = N(x|m,s)
 def loss_cp(cost, m, s):
     cw = cost.width
     b =  cost.expl
@@ -78,6 +79,7 @@ def loss_cp(cost, m, s):
     M[:D0,0:1] = m
     S = np.zeros([D1,D1])
     S[0:D0,0:D0] = s;
+
     Mdm = np.vstack([np.eye(D0),np.zeros([D1-D0,D0])])
     Sdm = np.zeros([D1*D1,D0])
     Mds = np.zeros([D1,D0*D0]) 
@@ -138,9 +140,10 @@ def loss_cp(cost, m, s):
     
     for i in range(np.size(cw)):                    # scale mixture of immediate costs
         cost.xtgt = target
-        cost.W = Q/(cw[i]**2);
+        cost.iT = Q/(cw[i]**2);
         [r, rdM, rdS, s2, s2dM, s2dS] = lossSat(cost, M, S, 6);
 
+        #累積コストの計算　式(2)
         L = L + r
         S2 = S2 + s2;
         

@@ -126,62 +126,6 @@ def congp(nargout,policy, m, s):
         
         return M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds, dMdp, dSdp, dCdp
 
-
-def gSin(nargin,nargout,m, v, i, e):
-    d = m.size
-    I = i.size
-    i = i.reshape([-1]).T;
-    if nargin < 4:
-        e = np.ones([I, 1])
-    e = e.reshape([-1,1])
-    
-    mi = m[i]
-    vi = v[np.ix_(i,i)]
-    vii = np.atleast_2d(np.diag(vi)).T #short-hand notation
-    M = e*np.exp(-vii/2)*np.sin(mi);      #mean
-    
-    lq = -(vii + vii.T)/2
-    q = np.exp(lq)
-    V = (np.exp(lq+vi)-q)*np.cos((mi - mi.T)) - (np.exp(lq-vi)-q)*np.cos((mi + mi.T))
-    V = e.dot(e.T)*V/2# variance
-
-    C = np.zeros([d,I])
-    C[i,:] = np.diag((e*np.exp(-vii/2)*np.cos(mi))[:,0]); # inv(v) times cov
-
-    if nargout > 3:                                          # compute derivatives?
-        dVdm = np.zeros([I,I,d]);
-        dCdm = np.zeros([d,I,d]); 
-        dVdv = np.zeros([I,I,d,d]); 
-        dCdv = np.zeros([d,I,d,d]);
-        dMdm = C.T;
-        U1 = -(np.exp(lq+vi)-q)*np.sin(mi- mi.T);
-        U2 = (np.exp(lq-vi)-q)*np.sin(mi + mi.T);
-
-        for j in range(I):
-            u = np.zeros([I,1])
-            u[j] = 1/2
-
-            dVdm[:,:,i[j]] = e.dot(e.T)*(U1*(u-u.T) + U2*(u +u.T))  
-            dVdv[j,j,i[j],i[j]] = np.exp(-vii[j]) * (1+(2*np.exp(-vii[j])-1)*np.cos(2*mi[j]))*e[j]*e[j]/2;
-            for k in np.append(np.arange(j),np.arange(j+1,I)):
-                dVdv[j,k,i[j],i[k]] = (np.exp(lq[j,k]+vi[j,k])*np.cos(mi[j]-mi[k]) + np.exp(lq[j,k]-vi[j,k])*np.cos(mi[j]+mi[k]))*e[j]*e[k]/2;
-                dVdv[j,k,i[j],i[j]] = -V[j,k]/2; 
-                dVdv[j,k,i[k],i[k]] = -V[j,k]/2; 
-
-            dCdm[i[j],j,i[j]] = -M[j];
-            dCdv[i[j],j,i[j],i[j]] = -C[i[j],j]/2;
-        
-        dMdv = np.transpose(dCdm,[1, 0, 2])/2;
-  
-        dMdv = np.reshape(dMdv,[I, d*d],order = 'F');
-        dVdv = np.reshape(dVdv,[I*I, d*d],order = 'F');
-        dVdm = np.reshape(dVdm,[I*I, d],order = 'F');
-        dCdv = np.reshape(dCdv,[d*I, d*d],order = 'F'); 
-        dCdm = np.reshape(dCdm,[d*I, d],order = 'F');
-        
-        return M, V, C, dMdm, dVdm, dCdm, dMdv, dVdv, dCdv
-
-    return M,V,C
     
 
 def gSat(nargin,nargout,m, v, i, e):

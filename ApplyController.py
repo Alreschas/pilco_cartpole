@@ -99,8 +99,8 @@ def rollout(start, policy, H, plant, cost,nargout):
     
     x = np.zeros([H+1, nX+2*nA]);
 
-    x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
-#    x[0,simi] = start.T + np.ones([1,np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T) #  for debug
+#    x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+    x[0,simi] = start.T + np.ones([1,np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T) #  for debug
     x[0,augi] = plant.augment(x[1,:]);
     
     u = np.zeros([H, nU])
@@ -128,8 +128,8 @@ def rollout(start, policy, H, plant, cost,nargout):
             _next[0,subi] = plant.subplant(state, u[i,:]);
         state[0,simi] = _next[0,simi]; 
         state[0,augi] = plant.augment(state);
-        x[i+1,simi] = state[0,simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
-#        x[i+1,simi] = state[0,simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
+#        x[i+1,simi] = state[0,simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
+        x[i+1,simi] = state[0,simi] + np.ones([np.size(simi)]).dot(np.linalg.cholesky(plant.noise).T);#for debug
         x[i+1,augi] = plant.augment(x[i+1,:]);
         
         if nargout > 2:
@@ -152,8 +152,8 @@ def gaussian(m, S, *n):
     else:
         n = n[0]
 
-    tmp = np.random.randn(np.size(S,1),n)
-#    tmp = np.ones([np.size(S,1),n])#for debug
+#    tmp = np.random.randn(np.size(S,1),n)
+    tmp = np.ones([np.size(S,1),n])#for debug
     x = m[...,:] + np.linalg.cholesky(S).dot(tmp);
 
     return x
