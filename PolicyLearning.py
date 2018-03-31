@@ -177,7 +177,7 @@ def propagate(m, s, plant, dynmodel, policy):
     j = np.arange(D1)
     k = np.arange(D1, D2)
 
-    [M[k], S[np.ix_(k, k)], C] = policy.fcn[0](3, policy.fcn[1][0], policy.fcn[1][1], policy, mm[i], ss[np.ix_(i, i)])
+    [M[k], S[np.ix_(k, k)], C] = policy.fcn(3, policy, mm[i], ss[np.ix_(i, i)])
     q = S[np.ix_(j, i)].dot(C)
     S[np.ix_(j, k)] = q
     S[np.ix_(k, j)] = q.T
@@ -212,6 +212,7 @@ def propagate(m, s, plant, dynmodel, policy):
     return Mnext, Snext
 
 
+#状態を、次のステップに伝播する
 def propagated(m, s, plant, dynmodel, policy, nargout=8):
 
     if nargout <= 2:  # just predict, no derivatives
@@ -268,7 +269,7 @@ def propagated(m, s, plant, dynmodel, policy, nargout=8):
     j = np.arange(D1)
     k = np.arange(D1, D2)
 
-    [M[k], S[np.ix_(k, k)], C, mdm, sdm, Cdm, mds, sds, Cds, Mdp, Sdp, Cdp] = policy.fcn[0](12, policy.fcn[1][0], policy.fcn[1][1], policy, mm[i], ss[np.ix_(i, i)])
+    [M[k], S[np.ix_(k, k)], C, mdm, sdm, Cdm, mds, sds, Cds, Mdp, Sdp, Cdp] = policy.fcn(12, policy, mm[i], ss[np.ix_(i, i)])
 
     [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(19, 7, S, C, mdm, sdm, Cdm, mds, sds, Cds, Mdm, Sdm, Mds, Sds, Mdp, Sdp, Cdp, i, j, k, D3)
 
@@ -324,8 +325,6 @@ def value(p, m0, S0, dynmodel, policy, plant, cost, H):
     policy.param = copy.deepcopy(p)
     p = unwrap(p)
     
-#    print(p)
-    
 
     dp = 0 * p
     m = m0
@@ -336,19 +335,25 @@ def value(p, m0, S0, dynmodel, policy, plant, cost, H):
     dSOdp = np.zeros([np.size(m0, 0) * np.size(m0, 0), len(p)])
 
     for t in range(H):  # for all time steps in horizon
-        [m, S, dmdmO, dSdmO, dmdSO, dSdSO, dmdp, dSdp] = plant.prop(m, S, plant, dynmodel, policy)  # get next state
+        #現在時刻の状態を推定
+        [m, S, dmdmO, dSdmO, dmdSO, dSdSO, dmdp, dSdp] = plant.prop(m, S, plant, dynmodel, policy)
 
         dmdp = dmdmO.dot(dmOdp) + dmdSO.dot(dSOdp) + dmdp
         dSdp = dSdmO.dot(dmOdp) + dSdSO.dot(dSOdp) + dSdp
 
-        [L[0, t], dLdm, dLdS, tmp] = cost.fcn(cost, m, S)  # predictive cost
+        #コストεtを計算
+        [L[0, t], dLdm, dLdS, tmp] = cost.fcn(cost, m, S)
 
-        L[0, t] = (cost.gamma**t) * L[0, t]                             # discount
+        #コストを割り引く
+        L[0, t] = (cost.gamma**t) * L[0, t]
+        
+        #微分の計算 dJ/dθ = sum_t(dεt/dμt・dμt/dθ + dεt/dΣt・dΣt/dθ) 式(12)
         dp = dp + (cost.gamma**t) * (dLdm.reshape([-1, 1], order='F').T.dot(dmdp) + dLdS.reshape([-1, 1], order='F').T.dot(dSdp)).T
 
         dmOdp = np.copy(dmdp)
-        dSOdp = np.copy(dSdp)  # bookkeeping
+        dSOdp = np.copy(dSdp)
 
+    #累積コストを計算
     J = np.sum(L, keepdims=True)
     dJdp = dp
 

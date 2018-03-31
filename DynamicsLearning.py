@@ -8,26 +8,27 @@ import scipy.optimize
 from utility import unwrap,rewrap
 
 
-def f1(nargout,*varargin):
-    if nargout == 0:
-        f1.p = varargin 
-        f1.F = f1.p[0]
-    else:
-        s = rewrap(f1.p[1], varargin[0])
-        [fx, dfx] = f1.F(s, f1.p[2][0], f1.p[2][1], f1.p[2][2], f1.p[2][3])
-        dfx = unwrap(dfx);
-        return fx,dfx
 
 class GaussianProcess:
     def __init__(self,lh0,*varargin):
         self.F = hypCurb
-        f1(0,self.F, lh0, varargin)
-    def targetFunc(self,lh):
-        [fx,dfx] = f1(2,lh)
+        self.lh0 = lh0
+        self.p = varargin
+    
+    def targetFunc(self,x):
+        [fx,dfx] = self.f(x)
         return fx[0]
-    def targetFunc_dev(self,lh):
-        [fx,dfx] = f1(2,lh)
+    
+    def targetFunc_dev(self,x):
+        [fx,dfx] = self.f(x)
         return dfx[:,0]
+    
+    def f(self,x):
+        s = rewrap(self.lh0, x)
+        [fx, dfx] = self.F(s, self.p[0], self.p[1], self.p[2], self.p[3])
+        dfx = unwrap(dfx);
+        return fx,dfx
+
 
 def solve_chol(A,B):
     x = np.linalg.solve(A,np.linalg.solve(A.T,B))
@@ -106,22 +107,6 @@ def hypCurb(lh, covfunc, x, y, curb):
     return f,df
 
 
-def covNoise(nargin,nargout,logtheta, x, z):
-
-    s2 = np.exp(2*logtheta);#noise variance
-
-    if nargin == 2:# compute covariance matrix
-        A = s2*np.eye(np.size(x,0));
-        return A
-    elif nargout == 2:   # compute test set covariances
-        A = s2
-        B = 0                               #zeros cross covariance by independence
-        return A,B
-    else:                                   #compute derivative matrix
-        A = 2*s2*np.eye(np.size(x,0))
-        return A
-
-
 def sq_dist(nargin,a, b, Q):
 
     if(nargin == 1 or b == []):
@@ -171,6 +156,21 @@ def covSEard(nargin,nargout,loghyper, x, z):
         
     return 0,0
 
+def covNoise(nargin,nargout,logtheta, x, z):
+
+    s2 = np.exp(2*logtheta);#noise variance
+
+    if nargin == 2:# compute covariance matrix
+        A = s2*np.eye(np.size(x,0));
+        return A
+    elif nargout == 2:   # compute test set covariances
+        A = s2
+        B = 0                               #zeros cross covariance by independence
+        return A,B
+    else:                                   #compute derivative matrix
+        A = 2*s2*np.eye(np.size(x,0))
+        return A
+
 def covSum(nargin,nargout,covfunc, logtheta, x, z):
     
     j = ['D+1','1']
@@ -213,6 +213,8 @@ def train(gpmodel, dump):
     D = np.size(gpmodel.inputs,1);
     covfunc = [covSum, [covSEard, covNoise]]
     E = np.size(gpmodel.targets,1);
+    
+    #ペナルティー
     curb.snr = 1000
     curb.ls = 100
     curb.std = np.atleast_2d(np.std(gpmodel.inputs,axis=0,ddof=1));# standard deviation ddof = 1
@@ -220,7 +222,7 @@ def train(gpmodel, dump):
 
     if(np.size(gpmodel.hyp) == 0):
         gpmodel.hyp = np.zeros([D+2,E])
-        train.nlml = np.zeros([E]);
+        train.nlml = np.zeros([E]);#学習後のコスト値格納用
 
         lh = np.matlib.repmat(np.hstack([np.log(curb.std),[[0, -1]]]).T,1,E)
         lh[D,:] = np.log(np.std(gpmodel.targets,axis = 0,ddof=1))
@@ -230,11 +232,18 @@ def train(gpmodel, dump):
         
     print("Train hyper-parameters of full GP ...")
     
+    #条件付き独立とみなして、それぞれガウス過程の学習
     for i in range(E):
         print('GP learn:',i)
         gp_own = GaussianProcess(lh[:,i],covfunc, gpmodel.inputs, gpmodel.targets[:,i], curb)
+        
+        #BFGで最適化
         result = scipy.optimize.minimize(gp_own.targetFunc,lh[:,i],jac=gp_own.targetFunc_dev,method='BFGS')
+
+        #ハイパーパラメータ更新
         gpmodel.hyp[:,i] = result['x']
+        
+        #学習後のコスト値を保存しておく
         train.nlml[i] = result['fun']
     
 
@@ -254,8 +263,8 @@ def trainDynModel(dynmodel,policy,plant,x,y):
     dyni = plant.dyni
     difi = plant.difi
     
-    Du = len(policy.maxU)
-    Da = len(plant.angi) # no. of ctrl and angles
+    Du = np.size(policy.maxU)
+    Da = np.size(plant.angi) # no. of ctrl and angles
     xaug = np.hstack([x[:,dyno], x[:,-Du-2*Da:-Du]])# x augmented with angles
     
     dynmodel.inputs = np.hstack([xaug[:,dyni], x[:,-Du:]])

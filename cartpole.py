@@ -5,10 +5,6 @@ Spyder Editor
 This is a temporary script file.
 """
 import numpy as np
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-import sys
 
 def dynamics_cp(t,z,f):
     l = 0.5;  # [m]      length of pendulum

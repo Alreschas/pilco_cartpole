@@ -8,16 +8,16 @@ from PolicyLearning import propagated
 from PolicyLearning import learnPolicy
 from DynamicsLearning import trainDynModel
 
-from GP import gp1d
+from GP import gp0d
 from GP import init_gp
 
-from Controller import conCat, congp, gSat
-from ApplyController import gaussian
+from Controller import conCat
 from ApplyController import applyController
 from ApplyController import rollout
 
 from drawer import Drawer
-from dynamics import dynamics_cp
+from cartpole import dynamics_cp
+from utility import gaussian
 from utility import gTrig
 
 
@@ -31,18 +31,14 @@ class Plant:
         self.dyni = dyni
         self.poli = poli
         self.difi = difi
-        self.augment = 0
-        self.subplant = 0
-        self.noise = np.diag(np.ones([1, 4])[0] * 0.01**2)
-        self.dynamics = 0
-        self.delay = 0
-        self.tau = 0
+#        self.noise = np.eye(4) * (0.01**2) #ダイナミクスに対するノイズ
+        self.noise = np.eye(4)*0.0001**2 #ダイナミクスに対するノイズなしの場合
         self.dynamics = dynamics_cp
         self.prop = propagated
 
 
 class Policy:
-    def __init__(self, plant, mu0, S0):
+    def __init__(self, plant, mu0, S0,nc):
         self.maxU = np.array([10])
         self.param = OrderedDict()
         self.fcn = 0
@@ -64,20 +60,14 @@ class Policy:
 
 class Cost:
     def __init__(self):
-        self.fcn = 0                       # cost function
-        self.gamma = 0                            # discount factor
-        self.p = 0                              # length of pendulum
-        self.width = 0                         # cost function width
-        self.expl = 0.0                          # exploration parameter (UCB)
-        self.angle = 0                   # index of angle (for cost function)
-        self.target = 0                 # target state
-
-        self.gamma = 1
-        self.p = 0.5
+        self.expl = 0.0      # 探索パラメータ(UCB)
+        self.gamma = 1      #コスト減衰率
+        self.p = 0.5        #振り子の長さ
         self.width = np.array([0.25])
-        self.expl = 0.0
-        self.target = np.array([[0, 0, 0, np.pi]]).T
-        self.fcn = loss_cp
+        self.expl = 0.0     #探索パラメータ
+        self.target = np.array([[0, 0, 0, np.pi]]).T #目標位置
+        self.angle = 0                   # 角度パラメータのインデックス
+        self.fcn = loss_cp #コスト関数
 
 
 class Dynmodel:
@@ -87,7 +77,7 @@ class Dynmodel:
         self.nigp = 0
 
         self.induce = np.zeros([300, 0, 1])
-        self.fcn = gp1d
+        self.fcn = gp0d
 
 
 class Fantasy:
@@ -96,67 +86,91 @@ class Fantasy:
         self.std = [[]] * N
 
 
-np.random.seed(1)
+np.random.seed(0)
 np.set_printoptions(linewidth=200)
 np.set_printoptions(precision=15)
 
-odei = np.array([0, 1, 2, 3])          # varibles for the ode solver
-augi = np.array([])                    # variables to be augmented
-dyno = np.array([0, 1, 2, 3])           # variables to be predicted (and known to loss)
-angi = np.array([3])                    # angle variables
+odei = np.array([0, 1, 2, 3])           # varibles for the ode solver
+dyno = np.array([0, 1, 2, 3])           # ロボットの状態変数へのインデックス　variables to be predicted (and known to loss)
+angi = np.array([3])                    # 角度変数のインデックス
 dyni = np.array([0, 1, 2, 4, 5])        # variables that serve as inputs to the dynamics GP
 poli = np.array([0, 1, 2, 4, 5])        # variables that serve as inputs to the policy
 difi = np.array([0, 1, 2, 3])           # variables that are learned via differences
 
-dt = 0.10                              # [s] sampling time
-T = 4.0                                # [s] initial prediction horizon time
-H = int(np.ceil(T / dt))                         # prediction steps (optimization horizon)
-mu0 = np.atleast_2d([0, 0, 0, 0]).T    # initial state mean
-S0 = np.diag([0.1, 0.1, 0.1, 0.1])**2   # initial state covariance
-N = 3                                  # number controller optimizations
-J = 1                                  # initial J trajectories of length H
-K = 1                                  # no. of initial states for which we optimize
-nc = 10                                # number of controller basis functions
+dt = 0.10                              # サンプリングタイム[s]
+T = 4.0                                # 1エピソードの時間[s]
+H = int(np.ceil(T / dt))               # １エピソードのステップ数
+mu0 = np.atleast_2d([0, 0, 0, 0]).T    # 初期状態の平均値
+#S0 = np.eye(4) * 0.1**2  # 初期状態の分散
+S0 = np.eye(4) * 0.0001**2#ノイズ無しの場合
+N = 4                                  # 学習回数
+J = 1                                  # 最初に何回ロールアウトするか
+nc = 10                                # コントローラの基底関数の数
 
 
 drawer = Drawer()
 plant = Plant()
-policy = Policy(plant, mu0, S0)
+
 cost = Cost()
 cost.angle = plant.angi
+
+policy = Policy(plant, mu0, S0,nc)
 dynmodel = Dynmodel()
+
 fantasy = Fantasy(N)
 
 realCost = [[]] * (N + 1)
-latent = [[]] * N
+latent = [[]] * (N + 1)
 M = [[]] * N
 Sigma = [[]] * N
 
-# drawer.main()
+init_gp()
+
+fin = False
 
 
+#学習処理メイン
 def learn(j):
+    global dynmodel, policy, plant, x, y, cost, fantasy, H, mu0, S0, M, Sigma,fin
+
+    #所定の回数を超えたら、終了フラグを立てる
     if j >= N:
+        fin = True
+        drawer.reset()
+        j = 0
+
+    #学習終了後は、プレイバック
+    if(fin == True):
+        drawer.setLatent(latent[j])
         return
-    print('episode:', j)
-    global dynmodel, policy, plant, x, y, cost, fantasy, H, mu0Sim, S0Sim, M, Sigma
+
+    print('episode:', j+1)
+    
+    #ダイナミクスの学習
     trainDynModel(dynmodel, policy, plant, x, y)
 
-    [M[j], Sigma[j], fantasy.mean[j], fantasy.std[j]] = learnPolicy(policy, dynmodel, plant, cost, H, mu0Sim, S0Sim)
+    #ポリシーの学習
+    [M[j], Sigma[j], fantasy.mean[j], fantasy.std[j]] = learnPolicy(policy, dynmodel, plant, cost, H, mu0, S0)
 
-    [xx, yy, realCost[j + J], latent[j]] = applyController(H, policy, plant, cost, mu0, S0)
+    #学習したポリシーでシミュレーション
+    [xx, yy, realCost[j], latent[j]] = applyController(H, policy, plant, cost, mu0, S0)
+
+    print(j)
+    #シミュレーション結果を、スタックに積んでいく
     x = np.vstack([x, xx])
     y = np.vstack([y, yy])
 
+    #ロボットの動作結果設定
     drawer.setLatent(latent[j])
 
 
-drawer.setIdleFunc(learn)
 
+#初回実行(乱数で実行)
 x = 0
 y = 0
 for jj in range(J):
-    [xx, yy, realCost[jj], latent[jj]] = rollout(gaussian(mu0, S0), policy, H, plant, cost, 4)
+    print(jj)
+    [xx, yy, realCost[jj], latent[jj]] = rollout(gaussian(mu0, S0), policy, H, plant, cost)
     if x == 0:
         x = np.empty((0, np.size(xx, 1)))
         y = np.empty((0, np.size(yy, 1)))
@@ -164,18 +178,16 @@ for jj in range(J):
     x = np.vstack([x, xx])
     y = np.vstack([y, yy])
 
+#制御入力を計算する関数を設定
+policy.fcn = conCat
 
-policy.fcn = [conCat, [congp, gSat]]
 
+#描画開始
+drawer.setIdleFunc(learn)#描画していないときに実行する関数
+drawer.setLatent(latent[0])#ロボットの動作結果設定
+drawer.main()#描画開始
 
-mu0Sim = mu0[dyno]
-S0Sim = S0[np.ix_(dyno, dyno)]
-
-init_gp()
-
-drawer.setLatent(latent[0])
-drawer.main()
-
+#描画したく無いときは、こっちを使う
 #for j in range(N):
 #    learn(j)
 

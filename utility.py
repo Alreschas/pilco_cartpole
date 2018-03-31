@@ -37,8 +37,19 @@ def rewrap(s, v):    # map elements of v (vector) onto s (any type)
             rets[i] = ret    
     return rets
            
-#xが、ガウス分布N(x|m,v)に従う時の、飽和関数のモーメントを計算する
-#i:xの内、角度を表す部分へのインデックス
+
+#ガウス分布N(x|m,S)からのサンプリング
+#nは、サンプリング数
+def gaussian(m, S, n=1):
+
+    x = m + np.linalg.cholesky(S).dot(np.random.randn(np.size(S,1),n));
+
+    return x
+
+
+#e・sin(x)と、e・cos(x)のモーメント計算
+#xは、ガウス分布N(x|m,v)に従うとする
+#i:xのうち、計算したい部分へのインデックス
 def gTrig(m,v,i,nargout=3,*e):
     M = np.zeros([2,1])
     V = np.zeros([2,2])    
@@ -46,8 +57,8 @@ def gTrig(m,v,i,nargout=3,*e):
     
     d = np.size(m) #mのサイズ
     I = np.size(i) #角度を表す部分の数
-    Ic = 2*np.arange(1,I+1)-1; # 1,3,5,7,9 cosのインデックス
-    Is = Ic-1;#0,2,4,6,8 sinのインデックス
+    Ic = 2*np.arange(1,I+1)-1; # 1,3,5,7,9 cosの結果格納インデックス
+    Is = Ic-1;#0,2,4,6,8 sinの結果格納インデックス
     if(e is ()):
         e = np.ones([I,1])
 #    else:
@@ -146,6 +157,10 @@ def gTrig(m,v,i,nargout=3,*e):
         return M, V, C
 
 
+
+#e・sin(x)のモーメント計算
+#xは、ガウス分布N(x|m,v)に従うとする
+#i:xのうち、計算したい部分へのインデックス
 def gSin(nargin,nargout,m, v, i, e):
 
     d = np.size(m) #mのサイズ

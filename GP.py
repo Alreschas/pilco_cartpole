@@ -4,11 +4,12 @@ import numpy as np
 
 def init_gp():
     gp0.oldX = np.empty(0)
+    gp0d.oldX = np.empty(0)
     gp2.oldX = np.empty(0)
     gp2d.oldX = np.empty(0)
-    gp0d.oldX = np.empty(0)
 
 
+#マハラノビスの距離
 def maha(nargin,a, b, Q):
     if nargin == 2:
         K = np.sum(a*a,1,keepdims = True) + np.sum(b*b,1,keepdims = True).T -2 * a.dot(b.T);
@@ -17,39 +18,92 @@ def maha(nargin,a, b, Q):
         K = np.sum(aQ*a,1,keepdims = True) + np.sum(b.dot(Q)*b,1,keepdims = True).T - 2*aQ.dot(b.T);
     return K
 
+
+#gpmodel.inputs:トレーニングインプット
+#gpmodel.targets:トレーニングターゲット
+#gpmodel.hyp:ハイパーパラメータ
+def gp0(nargin,nargout,gpmodel,m,s):
+    
+    inputs = gpmodel.inputs
+    [n, D] = gpmodel.inputs.shape
+    E = np.size(gpmodel.targets,1)
+    
+    X = gpmodel.hyp;
+    
+    if np.size(X) != np.size(gp0.oldX) \
+    or np.size(gp0.iK) == 0 \
+    or n != gp0.oldn \
+    or np.sum(np.any(X != gp0.oldX)):
+        gp0.oldX = np.copy(X)
+        gp0.oldn = n;
+        gp0.K = np.zeros([n,n,E])
+        gp0.iK = np.copy(gp0.K)
+        gp0.beta = np.zeros([n,E]);
+
+        for i in range(E):            
+            inp = inputs/np.exp(X[:D,i]).T;
+            gp0.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
+            if gpmodel.nigp != 0:
+                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i]));
+            else:
+                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
+    
+            gp0.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
+            gp0.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
+
+    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
+    inp = inputs -m.T;
+
+    for i in range(E):
+#  % first some useful intermediate terms
+        iL = np.diag(np.exp(-X[:D,i]));
+        _in = inp.dot(iL);
+        B = iL.dot(s).dot(iL)+np.eye(D)
+
+        t = np.linalg.solve(B.T,_in.T).T
+        l = np.exp(-np.sum(_in*t,axis = 1,keepdims = True)/2.)
+        lb = l*gp0.beta[:,i:i+1]
+        tiL = t.dot(iL)
+        c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(B));
+
+        M[i,0] = c * np.sum(lb,axis = 0,keepdims = True)  # predicted mean
+        V[:,i:i+1] = tiL.T.dot(lb).dot(c)        # input-output covariance
+        k[:,i:i+1] = 2*X[D,i]-np.sum(_in*_in,1,keepdims = True)/2;
+
+    for i in range(E):
+        ii = (inp/np.exp(2*X[:D,i].T));
+  
+        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
+            R = s.dot(np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j])))+np.eye(D)
+            t = 1/np.sqrt(np.linalg.det(R));
+            ij = (inp/np.exp(2*X[:D,j:j+1].T));
+            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
+            if i==j:
+                S[i,i] = t * (gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1]) - np.sum(gp0.iK[:,:,i]*L))
+            else:
+                S[i,j] = gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1])*t; 
+                S[j,i] = S[i,j];
+            
+        S[i,i] = S[i,i] + np.exp(2*X[D,i]); 
+        
+    #loop end i
+
+#% 4) centralize moments
+    S = S - M.dot(M.T);
+    return M,S,V        
+
+
+
 def gp0d(nargin,nargout,gpmodel, m, s):
 
     if nargout < 4:
-        print("error")
         [M, S, V] = gp0(3,3,gpmodel, m, s)
         return M,S,V;
 
     inputs = gpmodel.inputs
     [n, D] = gpmodel.inputs.shape
     E = np.size(gpmodel.targets,1)
-    
-    #for test
-#    gpmodel.hyp = np.array([\
-#       [5.479544426113205,   5.531103007660853,   5.465519490848748,   5.600710657391166],\
-#       [1.986422822089033,   3.945856914954724,   4.402753819006691,   4.505083086212572],\
-#       [3.094041375231762,   2.348837213605796,   2.548113489344849,   2.913900497892119],\
-#       [0.685578386885123,   0.543406310836560,   0.163082332006894,   1.050715615218730],\
-#       [2.750052705613265,   0.412943068601808,   0.030641788356902,   0.859384483464167],\
-#       [4.630573658622718,   3.336565661108991,   2.807800333002539,   3.627360216027113],\
-#       [-0.926721103355503,  0.592911270703511,   1.342433007443704,   0.082775701679897,],\
-#       [-7.211878280324594, -5.516204260437917,  -4.577579891573320,  -5.370897213576217]\
-#       ])
-#    
-#    s = np.array([\
-#     [0.010000000000000,                   0,                   0,                   0,                   0,   0.001393848450685],
-#     [                0,   0.010000000000000,                   0,                   0,                   0,   0.001393837669287],
-#     [                0,                   0,   0.010000000000000,                   0,                   0,   0.001393775913059],
-#     [                0,                   0,                   0,   0.009900663346622,                   0,   0.002774217892993],
-#     [                0,                   0,                   0,                   0,   0.000049502904210,   0.000001001324606],
-#     [0.001393848450685,   0.001393837669287,   0.001393775913059,   0.002774217892993,   0.000001001324606,   0.002243548948394]
-#     ])
-    ###
-    
+
     X = gpmodel.hyp;
     
     
@@ -209,95 +263,6 @@ def gp0d(nargin,nargout,gpmodel, m, s):
     return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds  
 
 
-def gp0(nargin,nargout,gpmodel,m,s):
-    
-    inputs = gpmodel.inputs
-    [n, D] = gpmodel.inputs.shape
-    E = np.size(gpmodel.targets,1)
-    
-    X = gpmodel.hyp;
-    
-    if np.size(X) != np.size(gp0.oldX) \
-    or np.size(gp0.iK) == 0 \
-    or n != gp0.oldn \
-    or np.sum(np.any(X != gp0.oldX)):
-        gp0.oldX = np.copy(X)
-        gp0.oldn = n;
-        gp0.K = np.zeros([n,n,E])
-        gp0.iK = np.copy(gp0.K)
-        gp0.beta = np.zeros([n,E]);
-
-        for i in range(E):            
-            inp = inputs/np.exp(X[:D,i]).T;
-            gp0.K[:,:,i] = np.exp(2*X[D,i]-maha(2,inp,inp,[])/2);
-            if gpmodel.nigp != 0:
-                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n) + np.diag(gpmodel.nigp[:,i]));
-            else:
-                L = np.linalg.cholesky(gp0.K[:,:,i] + np.exp(2*X[D+1,i])*np.eye(n));
-    
-            gp0.iK[:,:,i] = np.linalg.solve(L.T,np.linalg.solve(L,np.eye(n)));
-            gp0.beta[:,i] = np.linalg.solve(L.T,np.linalg.solve(L,gpmodel.targets[:,i]));
-
-    k = np.zeros([n,E]); M = np.zeros([E,1]); V = np.zeros([D,E]); S = np.zeros([E,E]);
-    inp = inputs -m.T;
-
-    for i in range(E):
-#  % first some useful intermediate terms
-        iL = np.diag(np.exp(-X[:D,i]));
-        _in = inp.dot(iL);
-        B = iL.dot(s).dot(iL)+np.eye(D)
-
-        t = np.linalg.solve(B.T,_in.T).T
-        l = np.exp(-np.sum(_in*t,axis = 1,keepdims = True)/2.)
-        lb = l*gp0.beta[:,i:i+1]
-        tiL = t.dot(iL)
-        c = np.exp(2*X[D,i])/np.sqrt(np.linalg.det(B));
-
-        M[i,0] = c * np.sum(lb,axis = 0,keepdims = True)  # predicted mean
-        V[:,i:i+1] = tiL.T.dot(lb).dot(c)        # input-output covariance
-        k[:,i:i+1] = 2*X[D,i]-np.sum(_in*_in,1,keepdims = True)/2;
-
-    for i in range(E):
-        ii = (inp/np.exp(2*X[:D,i].T));
-  
-        for j in range(i+1): # if i==j: diagonal elements of S; see Marc's thesis around eq. (2.26)
-            R = s.dot(np.diag(np.exp(-2*X[:D,i])+np.exp(-2*X[:D,j])))+np.eye(D)
-            t = 1/np.sqrt(np.linalg.det(R));
-            ij = (inp/np.exp(2*X[:D,j:j+1].T));
-            L = np.exp((k[:,i:i+1]+k[:,j:j+1].T)+maha(3,ii,-ij,np.linalg.solve(R,s)/2)) # called Q in thesis
-            if i==j:
-                S[i,i] = t * (gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1]) - np.sum(gp0.iK[:,:,i]*L))
-            else:
-                S[i,j] = gp0.beta[:,i:i+1].T.dot(L).dot(gp0.beta[:,j:j+1])*t; 
-                S[j,i] = S[i,j];
-            
-        S[i,i] = S[i,i] + np.exp(2*X[D,i]); 
-        
-    #loop end i
-
-#% 4) centralize moments
-    S = S - M.dot(M.T);
-    return M,S,V        
-
-
-def gp1(nargin,nargout,gpmodel, m, s):
-    if np.size(gpmodel.induce) == 0:
-        [M, S, V] = gp0(3,3,gpmodel, m, s); 
-        return M,S,V
-    print('error')
-    return 0,0,0
-
-def gp1d(nargin,nargout,gpmodel, m, s):
-    if nargout < 4:
-        [M, S, V] = gp1(3,3,gpmodel, m, s)
-        return M,S,V;
-    
-    if np.size(gpmodel.induce) == 0:
-        [M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds] = gp0d(3,9,gpmodel, m, s); 
-        return M, S, V, dMdm, dSdm, dVdm, dMds, dSds, dVds
-    
-    print('error')
-    return 0,0,0,0,0,0,0,0,0
 
 
 def gp2(gpmodel, m, s):
@@ -377,15 +342,14 @@ def gp2d(nargout,gpmodel, m, s):
     targets = gpmodel.targets
     X = gpmodel.hyp;
     
-    
     if nargout < 4:
         print("error")
         [M, S, V] = gp2(gpmodel, m, s)
         return
 
-    D = np.size(inputs,1);       # number of examples and dimension of input space
+    D = np.size(inputs,1);#入力のサンプル数
 
-    [n, E] = targets.shape# number of examples and number of outputs
+    [n, E] = targets.shape#出力の次元,出力のサンプル数
     X = np.reshape(X, [D+2, E],order='F');
 
 #% 1) If necessary, re-compute cached variables

@@ -5,30 +5,34 @@ from GP import gp2d
 from GP import gp2
 from utility import gSin
 
+#ポリシーπ(x)にしたがって、制御出力uを計算
+#状態xは、分布N(x|m,s)に従うとする
+def conCat(nargout, policy, m, s):
+    maxU=policy.maxU; # 出力の制限[-umax,umax]
+    E=np.size(maxU);  # 出力の次元
+    D=np.size(m);     # 入力の次元    
+    F=D+E             # 入出力の次元の合計 3.1章参照
+    j=np.arange(D,F)  # 出力のインデックス
+    i=np.arange(D)    # 入力のインデックス
 
-def conCat(nargout,con, sat, policy, m, s):
-    maxU=policy.maxU; # amplitude limit of control signal
-    E=np.size(maxU);   # dimension of control signal
-    D=np.size(m);      # dimension of input
-    
-    F=D+E
-    j=np.arange(D,F)
-    i=np.arange(D)
-    # initialize M and S
+    #入力の平均と分散をM,Sに格納
     M = np.zeros([F,1])
     M[i] = m
     S = np.zeros([F,F])
     S[np.ix_(i,i)] = s
     
     if nargout < 4:
-        [M[j], S[np.ix_(j,j)], Q] = con(3,policy, m, s);  # compute unsquashed control signal v
+        #制御出力を計算
+        [M[j], S[np.ix_(j,j)], Q] = congp(3,policy, m, s);
         q = S[np.ix_(i,i)].dot(Q)
         S[np.ix_(i,j)] = q
         S[np.ix_(j,i)] = q.T  # compute joint covariance S=cov(x,v)
-        [M, S, R] = sat(4,3,M, S, j, maxU);         # compute squashed control signal u
+        [M, S, R] = gSat(4,3,M, S, j, maxU);         # compute squashed control signal u
         C = np.hstack([np.eye(D),Q]).dot(R);                       # inv(s)*cov(x,u)
         if nargout == 1:
             return M
+        
+        return M,S,C
     else:
         Mdm = np.zeros([F,D])
         Sdm = np.zeros([F*F,D])
@@ -50,7 +54,7 @@ def conCat(nargout,con, sat, policy, m, s):
         
 #          % 1. Unsquashed controller --------------------------------------------------
 #        con(12,policy, m, s)
-        [M[j], S[np.ix_(j,j)], Q, Mdm[j,:], Sdm[jj,:], dQdm, Mds[j,:], Sds[jj,:], dQds, Mdp, Sdp, dQdp] = con(12,policy, m, s);
+        [M[j], S[np.ix_(j,j)], Q, Mdm[j,:], Sdm[jj,:], dQdm, Mds[j,:], Sds[jj,:], dQds, Mdp, Sdp, dQdp] = congp(12,policy, m, s);
         q = S[np.ix_(i,i)].dot(Q)
         S[np.ix_(i,j)] = q
         S[np.ix_(j,i)] = q.T;  # compute joint covariance S=cov(x,v)
@@ -66,7 +70,7 @@ def conCat(nargout,con, sat, policy, m, s):
         Sds[ji,:] = Sds[ij,:]
                 
 #          % 2. Apply Saturation -------------------------------------------------------
-        [M, S, R, MdM, SdM, RdM, MdS, SdS, RdS] = sat(4,9,M, S, j, maxU)
+        [M, S, R, MdM, SdM, RdM, MdS, SdS, RdS] = gSat(4,9,M, S, j, maxU)
           
 #          % apply chain-rule to compute derivatives after concatenation
         dMdm = MdM.dot(Mdm) + MdS.dot(Sdm)
@@ -91,8 +95,6 @@ def conCat(nargout,con, sat, policy, m, s):
         
         return M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds,  dMdp, dSdp, dCdp
    
-    return M,S,C
-
 
 #GPのコントローラー
 def congp(nargout,policy, m, s):
@@ -105,10 +107,12 @@ def congp(nargout,policy, m, s):
     
     
 #    % 2. Compute predicted control u inv(s)*covariance between input and control
-    if nargout < 4:                                # if no derivatives are required
+    if nargout < 4:
+        #微分が不要な場合
         [M, S, C] = gp2(policy, m, s);
         return M, S, C
-    else:                                          #else compute derivatives too
+    else:
+        #微分が必要な場合
         [M, S, C, dMdm, dSdm, dCdm, dMds, dSds, dCds, dMdi, dSdi, dCdi, dMdt, dSdt, dCdt, dMdh, dSdh, dCdh] = gp2d(18,policy, m, s);
   
 ##  % 3. Set derivatives of non-free parameters to zero: signal and noise variance
@@ -132,26 +136,35 @@ def congp(nargout,policy, m, s):
 def gSat(nargin,nargout,m, v, i, e):
     d = m.size
     I = i.size
-    i = i.reshape([-1,1]).T;
+    i = i.reshape([-1,1],order = 'F').T;
     if nargin < 4:
         e = np.ones([1, I])
-    e = e.reshape([-1,1]).T
+    e = e.reshape([-1,1],order = 'F').T
     
+    #ma = [m^T, 3m^T]^T 式(36)
     P = np.vstack([np.eye(d), 3*np.eye(d)]);
-    
     ma = P.dot(m)
-    madm = P;
+    
+    madm = np.copy(P);
     va = P.dot(v).dot(P.T)
     vadv = np.kron(P,P)
     va = (va+va.T)/2;
     
+    #9/8sin(x) 1/8sin(3x)の期待値を計算 式(36)
     [M2, S2, C2, Mdma, Sdma, Cdma, Mdva, Sdva, Cdva] = gSin(4,9,ma, va, np.hstack([i, d+i]), np.hstack([9*e, e])/8);
 
+    # 9/8 sin(x)と1/8 sin(3x)を足しあわせるための行列
     P = np.hstack([np.eye(I), np.eye(I)])
-    Q = np.hstack([np.eye(d), 3*np.eye(d)])
-    M = P.dot(M2);                                                # mean
+
+    # M = 9/8 sin(x) + 1/8 sin(3x) 式(36)
+    M = P.dot(M2);
+
+    #分散
     S = P.dot(S2).dot(P.T)
-    S = (S+S.T)/2;                                    # variance
+    S = (S+S.T)/2;
+
+
+    Q = np.hstack([np.eye(d), 3*np.eye(d)])
     C = Q.dot(C2).dot(P.T)                                    # inv(v) times input-output cov
 
     if nargout > 3:                                      # derivatives if required

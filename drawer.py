@@ -24,71 +24,36 @@ class CartPole:
 
         # environment
         self.dt = 0.1#[s]
-        self.g = 9.81
         self.stepTime = (int)(self.dt*1000)
 
-        # input
-        self.F = 0
-
-        # cart
-        self.M = 0.7
-
         # pole
-        self.l = 1
-        self.m = 0.325
-        self.friction = 0.0
+        self.l = 0.5
 
         # variable
-        self.reset()
-
-    def reset(self):
         self.x = 0
-        self.xd = 0
-        self.xdd = 0
         self.th = np.pi + 0.01
-        self.thd = 0
-        self.thdd = 0
         
     def setState(self,x,th):
         self.x = x
         self.th = th
         
-    def simulateSingleStep(self):
-        A = np.matrix([[self.m + self.M, self.m * self.l * np.cos(self.th)],
-                       [np.cos(self.th), self.l]])
-        b = np.matrix([[self.F + self.m * self.l * self.thd**2 * np.sin(self.th)],
-                       [-self.friction * self.thd - self.g * np.sin(self.th)]])
-        x = np.linalg.inv(A).dot(b)
-
-        self.xdd = x[0, 0]
-        self.xd += self.xdd * self.dt
-        self.x += self.xd * self.dt
-
-        self.thdd = x[1, 0]
-        self.thd += self.thdd * self.dt
-        self.th += self.thd * self.dt
-        
-#        if(self.th < -np.pi):self.th += 2*np.pi
-#        if(self.th >  np.pi):self.th -= 2*np.pi
-        
-    def addForce(self,F):
-        self.F = F
-        
     def draw(self):
-        cartH = 0.1
-        cartW = 0.2
-        poleW = 0.01
-        TireR = 0.05
+        glPushMatrix()
+        cartH = 0.05
+        cartW = 0.1
+        poleW = 0.005
+        poleR = 0.05
+        TireR = 0.025
         
         #floor
         glPushMatrix()
         glTranslated(0,-cartH/2-2*TireR,0)
         glColor3d(0.0, 0.0, 0.0);
         glBegin(GL_QUADS);
-        glVertex2d( -5, 0);
-        glVertex2d( -5, -0.1);
-        glVertex2d(  5, -0.1);
-        glVertex2d(  5, 0);
+        glVertex2d( -2, 0);
+        glVertex2d( -2, -0.05);
+        glVertex2d(  2, -0.05);
+        glVertex2d(  2, 0);
         glEnd();
         glPopMatrix()
     
@@ -126,7 +91,9 @@ class CartPole:
         glVertex2d(  poleW, 0);
         glEnd();
         glTranslated(0,-self.l,0)        
-        drawCircle(0.1,10)
+        drawCircle(poleR,10)
+        
+        glPopMatrix()
         
         
 
@@ -137,10 +104,13 @@ class Drawer:
         self.idleFunc = 0
         self.tMax = 40
         self.t = 0
-        self.callTime = 0
+        self.callTime = 1
         
     def setIdleFunc(self,func):
         self.idleFunc = func
+    
+    def reset(self):
+        self.callTime = 0
         
     def setLatent(self,latent):
         self.latent = latent
@@ -179,15 +149,38 @@ class Drawer:
             
         self.robo.draw()
         
+        self.glut_print(0.6,0.4,GLUT_BITMAP_HELVETICA_18,'epoch:'+str(self.callTime),0,0,0,1)
+        self.glut_print(0.6,0.3,GLUT_BITMAP_HELVETICA_18,'step:'+str(self.t),0,0,0,1)
+        
         glFlush()  # enforce OpenGL command
+
+    def glut_print(self, x,  y,  font,  text, r,  g , b , a):
+    
+        blending = False 
+        if glIsEnabled(GL_BLEND) :
+            blending = True
+    
+        #glEnable(GL_BLEND)
+        glColor3f(r,g,b,a)
+        glRasterPos2f(x,y)
+        for ch in text :
+            glutBitmapCharacter( font , ctypes.c_int( ord(ch) ) )
+    
+        if not blending :
+            glDisable(GL_BLEND) 
+
 
     def resize(self,w, h):
         glViewport(0, 0, w, h);
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        glOrtho(-w / 200.0, w / 200.0, -h / 200.0, h / 200.0, -1.0, 1.0);
+        glMatrixMode(GL_PROJECTION)
+#        glLoadIdentity();
+#        glOrtho(-w / 400.0, w / 400.0, -h / 400.0, h / 400.0, -1.0, 1.0);
         
-        glMatrixMode(GL_MODELVIEW);
+        s = 400
+        glLoadIdentity()
+        gluOrtho2D(-w/s, w/s, -h/s, h/s)
+        glMatrixMode(GL_MODELVIEW)
+        
         glLoadIdentity();
 
     def main(self):

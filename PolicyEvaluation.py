@@ -67,13 +67,18 @@ def lossSat(cost, m, s,nargout=5):
 
 
 #コスト関数
-#次状態の分布 = N(x|m,s)
+#状態の分布 = N(x|m,s)
+###応答####
+#コスト:L
+#コストの分散:S2
+#dLdm,dLds :コストの微分
 def loss_cp(cost, m, s):
+    
     cw = cost.width
     b =  cost.expl
-    D0 = np.size(s,1) # state dimension
-    D1 = D0 + 2*np.size(cost.angle) #state dimension (with sin/cos)
     
+    D0 = np.size(s,1) # 状態xの次元
+    D1 = D0 + 2*np.size(cost.angle) #state dimension (with sin/cos)
     
     M = np.zeros([D1,1])
     M[:D0,0:1] = m
@@ -117,7 +122,8 @@ def loss_cp(cost, m, s):
         ik=X.T[I.T==1]
         ki=XT.T[I.T==1]
 
-        Mdm[k,:]  = mdm.dot(Mdm[i,:]) + mds.dot(Sdm[ii,:]) # chainrule
+        #chain rule
+        Mdm[k,:]  = mdm.dot(Mdm[i,:]) + mds.dot(Sdm[ii,:])
         Mds[k,:]  = mdm.dot(Mds[i,:]) + mds.dot(Sds[ii,:])
         Sdm[kk,:] = sdm.dot(Mdm[i,:]) + sds.dot(Sdm[ii,:])
         Sds[kk,:] = sdm.dot(Mds[i,:]) + sds.dot(Sds[ii,:])
@@ -138,7 +144,7 @@ def loss_cp(cost, m, s):
     dLds = np.zeros([1,D0*D0])
     S2 = 0;
     
-    for i in range(np.size(cw)):                    # scale mixture of immediate costs
+    for i in range(np.size(cw)): # scale mixture of immediate costs
         cost.xtgt = target
         cost.iT = Q/(cw[i]**2);
         [r, rdM, rdS, s2, s2dM, s2dS] = lossSat(cost, M, S, 6);
@@ -152,7 +158,8 @@ def loss_cp(cost, m, s):
         dLds = dLds + np.reshape(rdM,[-1,1],order='F').T.dot(Mds) + np.reshape(rdS,[-1,1],order='F').T.dot(Sds);
 
 
-        if (abs(s2)>1e-12) :
+        #探索
+        if (b != 0 and abs(s2)>1e-12) :
             L = L + b*np.sqrt(s2);
             dLdm = dLdm + b/np.sqrt(s2) * ( s2dM.reshape([-1,1],order = 'F').T.dot(Mdm) + s2dS.reshape([-1,1],order = 'F').T.dot(Sdm) )/2;
             dLds = dLds + b/np.sqrt(s2) * ( s2dM.reshape([-1,1],order = 'F').T.dot(Mds) + s2dS.reshape([-1,1],order = 'F').T.dot(Sds) )/2;
