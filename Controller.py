@@ -98,6 +98,7 @@ def conCat(nargout, policy, m, s):
 
 #GPのコントローラー
 def congp(nargout,policy, m, s):
+
     policy.hyp = policy.param['hyp'];
     policy.inputs = policy.param['inputs'];
     policy.targets = policy.param['targets'];

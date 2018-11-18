@@ -8,66 +8,48 @@ from utility import unwrap, rewrap
 from utility import gTrig
 
 
-def f2(nargout, *varargin):
-    if nargout == 0:
-        f2.p = varargin
-        f2.F = f2.p[0]
-    else:
-        s = rewrap(f2.p[1], varargin[0])
-
-        [fx, dfx] = f2.F(s, f2.p[2][0], f2.p[2][1], f2.p[2][2], f2.p[2][3], f2.p[2][4], f2.p[2][5], f2.p[2][6])
-
-        return fx, dfx
-
-# own
 
 
 class PolicyOptimizer:
-    def __init__(self, x0, *varargin):
+    def __init__(self, x_fmt, *varargin):
         self.F = value
+        self.x_fmt = copy.deepcopy(x_fmt)
+        self.p = copy.deepcopy(varargin)
+
+        #結果保存用
+        self.updated = False
+        self.update = False
         self.dfx = np.empty(0)
-        f2(0, self.F, x0, varargin)
+        self.fx = np.empty(0)
+
+    def f(self,x):
+        s = rewrap(self.x_fmt, x)
+        [fx, dfx] = self.F(s, self.p[0], self.p[1], self.p[2], self.p[3], self.p[4], self.p[5], self.p[6])    
+        return fx, dfx
 
     def targetFunc(self, x):
-        [fx, dfx] = f2(2, x)
-        self.dfx = dfx
-        return fx
+        x = np.atleast_2d(x).reshape([-1,1],order = 'F') #2次元に戻す
+        
+        if(self.update == False):
+            [self.fx, self.dfx] = self.f(x)
+            self.updated = True
+
+        self.update = False
+        print('cost:',self.fx[0])
+        
+        return self.fx[0]
 
     def targetFunc_dev(self, x):
-        if(np.size(self.dfx) != 0):
-            dfx = self.dfx
-        else:
-            [fx, dfx] = f2(2, x)
-        return dfx[:, 0]
+        x = np.atleast_2d(x).reshape([-1,1],order = 'F') #2次元に戻す
 
+        if(self.updated == False):
+            [self.fx, self.dfx] = self.f(x)        
+            self.update = True
+            
+        self.updated = False
 
-def sliceModel(dynmodel, n, ii, D1, D2, D3):  # separate sub-dynamics
-    if (dynmodel.sub != 0):
-        dyn = dynmodel.sub[n]
-        do = dyn.dyno
-        D = np.size(ii) + D1 - D2
-        if (dyn.dyni != []):
-            di = dyn.dyni
-        else:
-            di = []
-        if (dyn.dynu != []):
-            du = dyn.dynu
-        else:
-            du = []
-        if (dyn.dynj != []):
-            dj = dyn.dynj
-        else:
-            dj = []
-        i = np.hstack([ii[di], D1 + du, D2 + dj])
-        k = D2 + do
-        dyn.inputs = np.hstack([dynmodel.inputs[:, np.hstack([di, D + du])], dynmodel.target[:, dj]]);  # inputs
-        dyn.target = dynmodel.target[:, do];  # targets
-    else:
-        dyn = dynmodel
-        k = np.arange(D2, D3)
-        i = ii
+        return self.dfx[:, 0]
 
-    return dyn, i, k
 
 
 def fillIn(nargin, nargout, S, C, mdm, sdm, Cdm, mds, sds, Cds, Mdm, Sdm, Mds, Sds, Mdp, Sdp, dCdp, i, j, k, D):
@@ -143,8 +125,8 @@ def propagate(m, s, plant, dynmodel, policy):
     difi = plant.difi
 
     D0 = len(m)  # size of the input mean
-    D1 = D0 + 2 * len(angi)  # length after mapping all angles to sin/cos
-    D2 = D1 + len(policy.maxU)  # length after computing control signal
+    D1 = D0 + 2 * np.size(angi)  # length after mapping all angles to sin/cos
+    D2 = D1 + np.size(policy.maxU)  # length after computing control signal
     D3 = D2 + D0  # length after predicting
     M = np.zeros([D3, 1])
     M[0:D0] = m
@@ -185,22 +167,17 @@ def propagate(m, s, plant, dynmodel, policy):
     ii = np.hstack([dyni, np.arange(D1, D2)])
     j = np.arange(D2)
 
-    if(dynmodel.sub != 0):
-        Nf = np.size(dynmodel.sub)
-    else:
-        Nf = 1
+    k = np.arange(D2, D3)
+    i = ii
+    j = np.setdiff1d(j, k)
 
-    for n in range(Nf):                               # potentially multiple dynamics models
-        [dyn, i, k] = sliceModel(dynmodel, n, ii, D1, D2, D3)
-        j = np.setdiff1d(j, k)
+    [M[k], S[np.ix_(k, k)], C] = dynmodel.fcn(3, 3, dynmodel, M[i], S[np.ix_(i, i)])
 
-        [M[k], S[np.ix_(k, k)], C] = dyn.fcn(3, 3, dyn, M[i], S[np.ix_(i, i)])
+    q = S[np.ix_(j, i)].dot(C)
+    S[np.ix_(j, k)] = q
+    S[np.ix_(k, j)] = q.T
 
-        q = S[np.ix_(j, i)].dot(C)
-        S[np.ix_(j, k)] = q
-        S[np.ix_(k, j)] = q.T
-
-        j = np.hstack([j, k])
+    j = np.hstack([j, k])
 
     P = np.hstack([np.zeros([D0, D2]), np.eye(D0)])
     P[np.ix_(difi, difi)] = np.eye(np.size(difi))
@@ -276,20 +253,16 @@ def propagated(m, s, plant, dynmodel, policy, nargout=8):
     ii = np.hstack([dyni, np.arange(D1, D2)])
     j = np.arange(D2)
 
-    if(dynmodel.sub != 0):
-        Nf = np.size(dynmodel.sub)
-    else:
-        Nf = 1
 
-    for n in range(Nf):                               # potentially multiple dynamics models
-        [dyn, i, k] = sliceModel(dynmodel, n, ii, D1, D2, D3)
-        j = np.setdiff1d(j, k)
+    k = np.arange(D2, D3)
+    i = ii
+    j = np.setdiff1d(j, k)
 
-        [M[k], S[np.ix_(k, k)], C, mdm, sdm, Cdm, mds, sds, Cds] = dyn.fcn(3, 9, dyn, M[i], S[np.ix_(i, i)])
+    [M[k], S[np.ix_(k, k)], C, mdm, sdm, Cdm, mds, sds, Cds] = dynmodel.fcn(3, 9, dynmodel, M[i], S[np.ix_(i, i)])
 
-        [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(18, 7, S, C, mdm, sdm, Cdm, mds, sds, Cds, Mdm, Sdm, Mds, Sds, Mdp, Sdp, [], i, j, k, D3)
+    [S, Mdm, Mds, Sdm, Sds, Mdp, Sdp] = fillIn(18, 7, S, C, mdm, sdm, Cdm, mds, sds, Cds, Mdm, Sdm, Mds, Sds, Mdp, Sdp, [], i, j, k, D3)
 
-        j = np.hstack([j, k])
+    j = np.hstack([j, k])
 
     P = np.hstack([np.zeros([D0, D2]), np.eye(D0)])
     P[np.ix_(difi, difi)] = np.eye(np.size(difi))
@@ -323,16 +296,15 @@ def propagated(m, s, plant, dynmodel, policy, nargout=8):
 def value(p, m0, S0, dynmodel, policy, plant, cost, H):
 
     policy.param = copy.deepcopy(p)
-    p = unwrap(p)
-    
+    p = unwrap(policy.param)    
 
     dp = 0 * p
     m = m0
     S = S0
     L = np.zeros([1, H])
 
-    dmOdp = np.zeros([np.size(m0, 0), len(p)])
-    dSOdp = np.zeros([np.size(m0, 0) * np.size(m0, 0), len(p)])
+    dmOdp = np.zeros([np.size(m0, 0), np.size(p)])
+    dSOdp = np.zeros([np.size(m0, 0) * np.size(m0, 0), np.size(p)])
 
     for t in range(H):  # for all time steps in horizon
         #現在時刻の状態を推定
@@ -356,8 +328,6 @@ def value(p, m0, S0, dynmodel, policy, plant, cost, H):
     #累積コストを計算
     J = np.sum(L, keepdims=True)
     dJdp = dp
-
-    print(J)
     
     return J, dJdp
 
@@ -397,15 +367,15 @@ def learnPolicy(policy, dynmodel, plant, cost, H, mu0Sim, S0Sim):
     #    unwrap(policy.p)
 
     X_fmt = policy.param
-    X0 = unwrap(X_fmt)[:,0]
     
     po_own = PolicyOptimizer(X_fmt, mu0Sim, S0Sim, dynmodel, policy, plant, cost, H)
 
+    X0 = unwrap(policy.param)[:,0] #minimizeは2次元ベクトルを扱えないため、一次元にしておく
     result = scipy.optimize.minimize(po_own.targetFunc, X0, jac=po_own.targetFunc_dev, method='BFGS',options={'maxiter':200,'disp':True})
 
-    policy.param = rewrap(policy.param,result['x'])
-    fX3 = result['fun']
-    print('optimize succeed:',fX3)
+    #minimizeの結果を展開
+    policy.param = rewrap(X_fmt,np.atleast_2d(result['x']).reshape([-1,1],order = 'F'))
+    print('optimize succeed:',result['fun'])
 
     [M, Sigma] = pred(policy, plant, dynmodel, mu0Sim[:, 0:1], S0Sim, H)
 

@@ -6,7 +6,7 @@ from utility import gTrig
 
 #飽和コスト
 def lossSat(cost, m, s,nargout=5):
-    D = len(m) # get state dimension
+    D = np.size(m) # get state dimension
     iT = cost.iT #W = T^-1
     xtgt = cost.xtgt#目標
     
@@ -43,16 +43,6 @@ def lossSat(cost, m, s,nargout=5):
     #  % wrt input covariance matrix
         dSds = r2*(2*i2SpW.dot(m-xtgt).dot((m-xtgt).T)-np.eye(D)).dot(i2SpW)-2*L*dLds;
 
-#% 3. inv(s)*cov(x,L)
-    if nargout > 6:
-        t = iT.dot(xtgt) - S1.dot(SiT.dot(xtgt)+m);
-        C = L*t;
-        dCdm = t*dLdm - L*S1;
-        print("error")
-#        dCds = -L*(bsxfun(@times,S1,permute(t,[3,2,1])) + ...
-#                                        bsxfun(@times,permute(S1,[1,3,2]),t'))/2;
-#        dCds = bsxfun(@times,t,dLds(:)') + reshape(dCds,D,D^2);
-
     L = 1+L #式(46)
     if(nargout <= 1):
         return L
@@ -62,8 +52,6 @@ def lossSat(cost, m, s,nargout=5):
         return L,dLdm,dLds,S
     if(nargout <= 6):
         return L, dLdm, dLds, S, dSdm, dSds
-    if(nargout >= 6):
-        return L, dLdm, dLds, S, dSdm, dSds, C, dCdm, dCds
 
 
 #コスト関数

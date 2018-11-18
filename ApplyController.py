@@ -2,6 +2,7 @@
 
 import numpy as np
 import scipy
+import scipy.integrate
 
 from utility import gTrig
 from utility import gaussian
@@ -47,7 +48,6 @@ def rollout(start, policy, H, plant, cost):
     x = np.zeros([H+1, nX+2*nA]);
 
     #初期状態にノイズをのせる(コレスキー分解を使っているが、普通にmultivariate normalでOK)
-    print(plant.noise)
     x[0,simi] = start.T + np.random.randn(1,np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
 
     
@@ -78,7 +78,7 @@ def rollout(start, policy, H, plant, cost):
         _next[0,odei] = simulate(state[0,odei], u[i,:], plant);
         state[0,simi] = _next[0,simi]; 
 
-        #シミュレーション結果に、ノイズをのせる
+        #シミュレーション結果に、観測ノイズをのせる
         x[i+1,simi] = state[0,simi] + np.random.randn(np.size(simi)).dot(np.linalg.cholesky(plant.noise).T);
         
         #コストの計算

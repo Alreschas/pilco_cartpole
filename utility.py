@@ -1,37 +1,45 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import copy
+import sys
 
 from collections import OrderedDict
 
 #一列に展開
 def unwrap(s):
-    v = np.atleast_2d(np.array([[]]))
+    v = np.atleast_2d(np.array([[]])).T
     if isinstance(s,OrderedDict):
         n = list(s.values())
         for i in n:
-#            print(v)
-            tmp = np.reshape(i,[np.size(i),1],order='F')
-#            print(np.reshape(i,[np.size(i),1],order='F'))
-            v = np.append(v,tmp)
-        v = np.atleast_2d(v).T
+            #一列のデータに変換して、結合
+            tmp = np.reshape(i,[-1,1],order='F')
+            v = np.append(v,tmp,axis = 0)
     else:
-        v = np.reshape(s,[np.size(s),1],order="F")
+        #一列のデータに変換
+        v = np.reshape(s,[-1,1],order="F")
     return v
 
 #vを、辞書型など,sの型に戻す
 def rewrap(s, v):    # map elements of v (vector) onto s (any type)
-    if(np.size(v) < np.size(s)):
-        sys.stderr.write('The vector for conversion contains too few elements')
     rets = copy.deepcopy(s)
 
     if isinstance(s,np.ndarray):
-        rets = np.reshape(v[0:np.size(s)], [np.size(s),1],order='F');
+
+        if(np.size(v) < np.size(s)):
+            sys.stderr.write('The vector for conversion contains too few elements')
+
+        #一列のデータに変換
+        rets = np.reshape(v[0:np.size(s)], [-1,1],order='F');
     else:    
         st = 0
         for i in s:
+
             tgt = s[i]
-            tmp = v[st:st+np.size(tgt)]
+            tmp = v[st:st+np.size(tgt),0]
+            
+            if(np.size(tmp) != np.size(tgt)):
+                sys.stderr.write('The vector for conversion contains too few elements')
+            
             st = st + np.size(tgt)
             ret = tmp.reshape(tgt.shape,order = 'F')
             rets[i] = ret    

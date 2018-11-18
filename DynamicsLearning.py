@@ -3,6 +3,7 @@
 import numpy as np
 import numpy.matlib
 import scipy.optimize
+import copy
 
 
 from utility import unwrap,rewrap
@@ -10,10 +11,10 @@ from utility import unwrap,rewrap
 
 
 class GaussianProcess:
-    def __init__(self,lh0,*varargin):
+    def __init__(self,x_fmt,*varargin):
         self.F = hypCurb
-        self.lh0 = lh0
-        self.p = varargin
+        self.x_fmt = copy.deepcopy(x_fmt)
+        self.p = copy.deepcopy(varargin)
     
     def targetFunc(self,x):
         [fx,dfx] = self.f(x)
@@ -24,9 +25,8 @@ class GaussianProcess:
         return dfx[:,0]
     
     def f(self,x):
-        s = rewrap(self.lh0, x)
+        s = rewrap(self.x_fmt, x)
         [fx, dfx] = self.F(s, self.p[0], self.p[1], self.p[2], self.p[3])
-        dfx = unwrap(dfx);
         return fx,dfx
 
 
@@ -57,7 +57,7 @@ def gpr(nargout,logtheta, covfunc, x, y, *xstar):
         if( nargout==2 ):
             out2 = np.zeros(np.shape(logtheta));
             W = np.linalg.solve(L.T,(np.linalg.solve(L,np.eye(n))))-alpha.dot(alpha.T);
-            for i in range(len(out2)):
+            for i in range(np.size(out2)):
                 out2[i]=np.sum(W*covfunc[0](4,1,covfunc[1], logtheta, x, i))/2
             return out1,out2
     #ok
@@ -176,12 +176,12 @@ def covSum(nargin,nargout,covfunc, logtheta, x, z):
     j = ['D+1','1']
     [n, D] = x.shape
     v = np.array([[]]);              # v vector indicates to which covariance parameters belong
-    for i in range(len(covfunc)):
+    for i in range(np.size(covfunc)):
         v = np.hstack([v, np.matlib.repmat(i, 1, eval(j[i]))])
 
     if(nargin == 3):
         A = np.zeros([n, n]);
-        for i in range(len(covfunc)):      #iteration over summand functions
+        for i in range(np.size(covfunc)):      #iteration over summand functions
             f = covfunc[i]
             A = A + f(2,1,np.atleast_2d(logtheta[(v==i).T]).T, x,0)            
         return A
@@ -189,7 +189,7 @@ def covSum(nargin,nargout,covfunc, logtheta, x, z):
         if nargout == 2:          #compute test set cavariances
             A = np.zeros([np.size(z,0),1]);
             B = np.zeros([np.size(x,0),np.size(z,0)]);   # allocate space
-            for i in range(len(covfunc)):
+            for i in range(np.size(covfunc)):
                 f = covfunc[i];
                 [AA, BB] = f(3,2,logtheta[(v==i).T], x, z);  # compute test covariances
                 A = A + AA 
@@ -245,14 +245,6 @@ def train(gpmodel, dump):
         
         #学習後のコスト値を保存しておく
         train.nlml[i] = result['fun']
-    
-
-    
-    [N, D] = gpmodel.inputs.shape; 
-    [M, uD, uE] = gpmodel.induce.shape;
-    if M >= N:
-        print("Because of too few training expamples, we don't need FITC")
-        return    # if too few training examples, we don't need FITC
  
 
 #ダイナミクスの学習
@@ -263,11 +255,11 @@ def trainDynModel(dynmodel,policy,plant,x,y):
     dyni = plant.dyni
     difi = plant.difi
     
-    Du = np.size(policy.maxU)
-    Da = np.size(plant.angi) # no. of ctrl and angles
-    xaug = np.hstack([x[:,dyno], x[:,-Du-2*Da:-Du]])# x augmented with angles
+    Du = np.size(policy.maxU)#制御入力の数
+    Da = np.size(plant.angi) #角度パラメータの数
+    xaug = np.hstack([x[:,dyno], x[:,-Du-2*Da:-Du]])# xと角度パラメータを結合
     
-    dynmodel.inputs = np.hstack([xaug[:,dyni], x[:,-Du:]])
+    dynmodel.inputs = np.hstack([xaug[:,dyni], x[:,-Du:]])#制御入力を結合　GPのインプット
     dynmodel.targets = y[:,dyno];
     dynmodel.targets[:,difi] = dynmodel.targets[:,difi] - x[:,dyno[difi]];
     

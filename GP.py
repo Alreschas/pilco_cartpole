@@ -659,7 +659,7 @@ if __name__ == '__main__':
             self.inputs = np.arange(1,51).reshape([10,5],order='F')
             self.targets = np.arange(1,11).reshape([10,1],order='F')
             self.hyp = 1*np.arange(1,8).reshape([7,1],order='F');
-            self.induce = np.empty(0)
+
     gpmodel = GpModel()
     m = np.arange(1,6).reshape([5,1],order='F')
     s = np.arange(1,26).reshape([5,5],order='F')

@@ -3,13 +3,12 @@
 import sys
 
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-matplotlib.use('TkAgg')
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
+
+import time
 
 def drawCircle(r,n):
     glBegin(GL_POLYGON);
@@ -39,16 +38,16 @@ class CartPole:
         
     def draw(self):
         glPushMatrix()
-        cartH = 0.05
-        cartW = 0.1
+        cartH = 0.06
+        cartW = 0.12
         poleW = 0.005
-        poleR = 0.05
+        poleR = 0.04
         TireR = 0.025
         
         #floor
         glPushMatrix()
         glTranslated(0,-cartH/2-2*TireR,0)
-        glColor3d(0.0, 0.0, 0.0);
+        glColor3d(0.3, 0.3, 0.3);
         glBegin(GL_QUADS);
         glVertex2d( -2, 0);
         glVertex2d( -2, -0.05);
@@ -59,13 +58,13 @@ class CartPole:
     
         #cart
         glTranslated(self.x,0,0)
-        glColor3d(1.0, 0.5, 0.0);
+        glColor3d(0.9, 0.7, 0.7);
         glBegin(GL_QUADS);
         glVertex2d(-cartW, -cartH);
         glVertex2d(-cartW,  cartH);
         glVertex2d( cartW,  cartH);
         glVertex2d( cartW, -cartH);
-        glEnd();        
+        glEnd();
         
         #tire L
         glPushMatrix()
@@ -82,8 +81,9 @@ class CartPole:
         glPopMatrix()
         
         #pole
+        glPushMatrix()
         glRotated(self.th*180/np.pi,0,0,1)
-        glColor3d(0.0, 0.5, 0.0);
+        glColor3d(0.8, 0.5, 0.5);
         glBegin(GL_QUADS);
         glVertex2d( -poleW, 0);
         glVertex2d( -poleW, -self.l);
@@ -92,6 +92,11 @@ class CartPole:
         glEnd();
         glTranslated(0,-self.l,0)        
         drawCircle(poleR,10)
+        glPopMatrix()
+
+        #pin
+        glColor3d(0., 0., 0.);
+        drawCircle(0.02,10)
         
         glPopMatrix()
         
@@ -124,12 +129,13 @@ class Drawer:
         else:
             q1 = 0
             q2 = 0
-#        # set state                    
         self.robo.setState(q1,q2)
-#
+
         glutPostRedisplay()
-#        
-#        print(self.t)
+        
+        if(self.t == 0):
+            time.sleep(1)
+        
         self.t += 1
         if(self.t < self.tMax):
             glutTimerFunc(self.robo.stepTime, self.animation, 0);
@@ -172,15 +178,14 @@ class Drawer:
 
     def resize(self,w, h):
         glViewport(0, 0, w, h);
+
         glMatrixMode(GL_PROJECTION)
-#        glLoadIdentity();
-#        glOrtho(-w / 400.0, w / 400.0, -h / 400.0, h / 400.0, -1.0, 1.0);
+        glLoadIdentity()
         
         s = 400
-        glLoadIdentity()
         gluOrtho2D(-w/s, w/s, -h/s, h/s)
-        glMatrixMode(GL_MODELVIEW)
-        
+
+        glMatrixMode(GL_MODELVIEW)        
         glLoadIdentity();
 
     def main(self):
@@ -192,8 +197,6 @@ class Drawer:
         
         glutInit(sys.argv)
     
-#        glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE,GLUT_ACTION_GLUTMAINLOOP_RETURNS);
-
         glutInitDisplayMode(GLUT_RGBA)
 
         glutCreateWindow(b"cartPole")      # show window
